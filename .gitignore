@@ -1,4 +1,7 @@
-node_modules
-dist
-public/m
-.netlify
+node_modules/
+dist/
+cdk.out/
+.env
+.env.local
+*.log
+_old/
