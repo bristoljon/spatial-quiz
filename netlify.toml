@@ -1,0 +1,38 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  node_bundler = "esbuild"
+
+[dev]
+  command = "npx vite"
+  targetPort = 5173
+  port = 8888
+
+# SPA routes (functions under /api/* have their own paths)
+[[redirects]]
+  from = "/host/*"
+  to = "/index.html"
+  status = 200
+[[redirects]]
+  from = "/host"
+  to = "/index.html"
+  status = 200
+[[redirects]]
+  from = "/play/*"
+  to = "/index.html"
+  status = 200
+[[redirects]]
+  from = "/screen/*"
+  to = "/index.html"
+  status = 200
+[[redirects]]
+  from = "/j/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/m/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"

@@ -1,0 +1,24 @@
+{
+  "name": "stroud-quiz",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev",
+    "prep": "node scripts/prep-media.mjs",
+    "build": "node scripts/prep-media.mjs && vite build",
+    "preview": "vite preview",
+    "start": "node scripts/local-server.mjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.0.0",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "sharp": "^0.34.0",
+    "vite": "^6.0.0"
+  }
+}
