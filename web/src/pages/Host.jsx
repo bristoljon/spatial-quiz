@@ -6,6 +6,7 @@ import Timer from '../components/Timer.jsx';
 import Avatar from '../components/Avatar.jsx';
 import Leaderboard from '../components/Leaderboard.jsx';
 import { describeAnswer } from '../format.js';
+import RoundHead from '../components/RoundHead.jsx';
 
 const KEY = 'sq:host';
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; } };
@@ -66,6 +67,7 @@ export default function Host() {
 
   const { room, question: q, players, reveal, quiz } = state;
   const placed = players.filter((p) => p.x !== null).length;
+  const hidden = players.filter((p) => p.hidden).length;
 
   return (
     <main className={`host phase-${room.phase}`}>
@@ -80,7 +82,7 @@ export default function Host() {
       {(room.phase === 'question' || room.phase === 'reveal') && q && (
         <section className="stage">
           <div className="question-head">
-            <span className="qnum">Q{q.index + 1}/{q.total} · {q.points} pts</span>
+            <RoundHead q={q} phase={room.phase} />
             <h2>{q.prompt}</h2>
             {room.phase === 'question' && <Timer endsAt={room.endsAt} timeLimit={q.timeLimit} now={now} big />}
           </div>
@@ -89,7 +91,8 @@ export default function Host() {
             <aside className="side">
               {room.phase === 'question' ? (
                 <>
-                  <div className="stat"><b>{placed}</b> / {players.length} placed</div>
+                  <div className="stat"><b>{placed + hidden}</b> / {players.length} placed</div>
+                  {hidden > 0 && <div className="stat small">👻 <b>{hidden}</b> invisible</div>}
                   <button onClick={() => send({ type: 'host:end' })}>End now <kbd>E</kbd></button>
                 </>
               ) : (

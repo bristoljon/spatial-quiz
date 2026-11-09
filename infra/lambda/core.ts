@@ -1,19 +1,20 @@
 // The room engine. Transport-agnostic: Lambda + DynamoDB in production,
 // an in-memory store + `ws` server for local development.
 import { randomBytes, randomUUID } from 'node:crypto';
-import { quiz } from '../../shared/quiz.js';
-import { scorePosition, revealFor, publicQuestion } from '../../shared/scoring.js';
+import { quiz, questions } from '../../shared/quiz.js';
+import { scorePosition, revealFor, publicQuestion, hintFor } from '../../shared/scoring.js';
 import { clamp01 } from '../../shared/spatial.js';
 import { normaliseTag, assignColor } from '../../shared/avatar.js';
-import type { Store, Transport, Room, Player, Conn, Results, PlayerResult } from './types.js';
+import { POWER_IDS, powerStatus, activePowers, isActive } from '../../shared/powers.js';
+import type { Store, Transport, Room, Player, Results, PlayerResult } from './types.js';
 
 // Moves arriving up to this long after endsAt still count (network latency).
 export const GRACE_MS = 1000;
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-const EMOJI_RE = /^\p{Extended_Pictographic}(‍\p{Extended_Pictographic}|️|\p{Emoji_Modifier})*$/u;
 
 type Msg = { type: string; [k: string]: unknown };
+type Target = { conn: string; playerId?: string };
 
 export class Core {
   constructor(
@@ -54,6 +55,7 @@ export class Core {
         case 'host:join': return this.hostJoin(connId, msg);
         case 'player:join': return this.playerJoin(connId, msg);
         case 'player:move': return this.playerMove(connId, msg);
+        case 'player:power': return this.playerPower(connId, msg);
         case 'host:start':
         case 'host:next': return this.hostNext(connId);
         case 'host:end': return this.hostEnd(connId);
@@ -112,11 +114,11 @@ export class Core {
     if (!room) return;
     if (room.phase === 'question') return; // use host:end first
     const next = room.qIndex + 1;
-    if (next >= quiz.questions.length) {
+    if (next >= questions.length) {
       await this.store.updateRoom(room.code, { phase: 'final', endsAt: null, results: null });
       return this.broadcastState({ ...room, phase: 'final', endsAt: null, results: null });
     }
-    const q = quiz.questions[next];
+    const q = questions[next];
     const endsAt = Date.now() + q.timeLimit * 1000;
     // Everyone starts off the board for a new question.
     const players = await this.store.listPlayers(room.code);
@@ -137,7 +139,7 @@ export class Core {
     const room = await this.requireHost(connId);
     if (!room) return;
     const players = await this.store.listPlayers(room.code);
-    await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { score: 0, x: null, y: null, placedQ: null })));
+    await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { score: 0, x: null, y: null, placedQ: null, powers: {} })));
     const patch: Partial<Room> = { phase: 'lobby', qIndex: -1, endsAt: null, results: null };
     await this.store.updateRoom(room.code, patch);
     await this.broadcastState({ ...room, ...patch });
@@ -165,7 +167,7 @@ export class Core {
       const color = assignColor(String(msg.color || ''), tag, others);
       player = {
         room: code, id: randomUUID(), name, tag, color,
-        score: 0, conn: connId, x: null, y: null, placedQ: null,
+        score: 0, conn: connId, x: null, y: null, placedQ: null, powers: {},
       };
       await this.store.putPlayer(player);
     }
@@ -181,8 +183,33 @@ export class Core {
     if (!room || room.phase !== 'question' || !room.endsAt) return;
     if (Date.now() > room.endsAt + GRACE_MS) return;
     const x = clamp01(msg.x), y = clamp01(msg.y);
-    await this.store.updatePlayer(room.code, conn.playerId, { x, y, placedQ: room.qIndex });
-    await this.broadcast(room, { type: 'pos', id: conn.playerId, x, y });
+    const player = await this.store.getPlayer(room.code, conn.playerId);
+    if (!player) return;
+    await this.store.updatePlayer(room.code, player.id, { x, y, placedQ: room.qIndex });
+    const pos = { type: 'pos', id: player.id, x, y };
+    // Invisible players' positions only ever go back to themselves.
+    if (isActive(player.powers, 'invisible', room.qIndex)) await this.transport.send(connId, pos);
+    else await this.broadcast(room, () => pos);
+  }
+
+  private async playerPower(connId: string, msg: Msg) {
+    const conn = await this.store.getConn(connId);
+    if (!conn || conn.role !== 'player' || !conn.playerId) return;
+    const room = await this.store.getRoom(conn.room);
+    if (!room || room.phase !== 'question' || !room.endsAt || Date.now() > room.endsAt + GRACE_MS) {
+      return this.transport.send(connId, { type: 'error', message: 'Power-ups can only be used during a question' });
+    }
+    const id = String(msg.power);
+    if (!POWER_IDS.includes(id)) return this.transport.send(connId, { type: 'error', message: 'Unknown power-up' });
+    const player = await this.store.getPlayer(room.code, conn.playerId);
+    if (!player) return;
+    const q = questions[room.qIndex];
+    const status = powerStatus(player.powers, id, q.round, room.qIndex);
+    if (status === 'active') return; // already on
+    if (status === 'used') return this.transport.send(connId, { type: 'error', message: 'Already used this round' });
+    const powers = { ...player.powers, [id]: { round: q.round, q: room.qIndex } };
+    await this.store.updatePlayer(room.code, player.id, { powers });
+    await this.broadcastState(room);
   }
 
   // --------------------------------------------------------------- finalize
@@ -192,13 +219,17 @@ export class Core {
   async finalize(code: string, qIndex: number) {
     const room = await this.store.getRoom(code);
     if (!room || room.phase !== 'question' || room.qIndex !== qIndex) return;
-    const q = quiz.questions[qIndex];
+    const q = questions[qIndex];
     const players = await this.store.listPlayers(code);
     const perPlayer: Results['perPlayer'] = {};
     for (const p of players) {
       const placed = p.placedQ === qIndex && p.x !== null && p.y !== null;
       const scored = placed ? scorePosition(q, { x: p.x!, y: p.y! }) : null;
-      perPlayer[p.id] = scored ? { x: p.x!, y: p.y!, ...scored } as PlayerResult : null;
+      if (!scored) { perPlayer[p.id] = null; continue; }
+      const powers = activePowers(p.powers, qIndex);
+      let delta = scored.delta;
+      if (powers.includes('double') && delta > 0) delta *= 2;
+      perPlayer[p.id] = { x: p.x!, y: p.y!, value: scored.value, correct: scored.correct, delta, powers } as PlayerResult;
     }
     const results: Results = { qIndex, reveal: revealFor(q), perPlayer };
     const won = await this.store.updateRoom(code, { phase: 'reveal', results, endsAt: null }, { phase: 'question', qIndex });
@@ -212,28 +243,27 @@ export class Core {
 
   // -------------------------------------------------------------- outbound
 
+  // State is tailored per viewer: you always see your own position and
+  // power-ups, but invisible players are stripped out for everyone else.
   private async broadcastState(room: Room) {
     const players = await this.store.listPlayers(room.code);
-    const state = buildState(room, players);
-    await this.broadcast(room, state, undefined, players);
+    await this.broadcast(room, (t) => buildState(room, players, t.playerId ?? null), players);
   }
 
-  private async broadcast(room: Room, msg: object, exceptConn?: string, players?: Player[]) {
+  private async broadcast(room: Room, build: (t: Target) => object, players?: Player[]) {
     players = players ?? (await this.store.listPlayers(room.code));
-    const targets: { conn: string; playerId?: string }[] = [];
+    const targets: Target[] = [];
     if (room.hostConn) targets.push({ conn: room.hostConn });
     for (const p of players) if (p.conn) targets.push({ conn: p.conn, playerId: p.id });
     await Promise.all(
-      targets
-        .filter((t) => t.conn !== exceptConn)
-        .map(async (t) => {
-          const ok = await this.transport.send(t.conn, msg);
-          if (ok) return;
-          // Stale connection: forget it so we stop trying.
-          await this.store.deleteConn(t.conn).catch(() => {});
-          if (t.playerId) await this.store.updatePlayer(room.code, t.playerId, { conn: null }).catch(() => {});
-          else await this.store.updateRoom(room.code, { hostConn: null }).catch(() => {});
-        }),
+      targets.map(async (t) => {
+        const ok = await this.transport.send(t.conn, build(t));
+        if (ok) return;
+        // Stale connection: forget it so we stop trying.
+        await this.store.deleteConn(t.conn).catch(() => {});
+        if (t.playerId) await this.store.updatePlayer(room.code, t.playerId, { conn: null }).catch(() => {});
+        else await this.store.updateRoom(room.code, { hostConn: null }).catch(() => {});
+      }),
     );
   }
 
@@ -243,30 +273,41 @@ export class Core {
   }
 }
 
-export function buildState(room: Room, players: Player[]) {
-  const total = quiz.questions.length;
-  const q = room.qIndex >= 0 && room.qIndex < total ? quiz.questions[room.qIndex] : null;
+export function buildState(room: Room, players: Player[], viewerId: string | null) {
+  const total = questions.length;
+  const q = room.qIndex >= 0 && room.qIndex < total ? questions[room.qIndex] : null;
   const showLive = room.phase === 'question';
   const results = room.phase === 'reveal' ? room.results : null;
+  const me = viewerId ? players.find((p) => p.id === viewerId) : null;
   return {
     type: 'state',
     serverNow: Date.now(),
-    quiz: { title: quiz.title, subtitle: quiz.subtitle, total },
+    quiz: { title: quiz.title, subtitle: quiz.subtitle, total, rounds: quiz.rounds.map((r) => ({ title: r.title, count: r.questions.length })) },
     room: { code: room.code, phase: room.phase, qIndex: room.qIndex, endsAt: room.endsAt, hostOnline: !!room.hostConn },
     question: q && room.phase !== 'final' ? publicQuestion(q, room.qIndex, total) : null,
     reveal: results?.reveal ?? null,
+    me: me && q && room.phase !== 'final'
+      ? {
+          powers: Object.fromEntries(POWER_IDS.map((id) => [id, powerStatus(me.powers, id, q.round, room.qIndex)])),
+          hint: showLive && isActive(me.powers, 'reveal', room.qIndex) ? hintFor(q) : null,
+        }
+      : null,
     players: players
       .map((p) => {
         const live = showLive && p.placedQ === room.qIndex;
+        const hidden = showLive && p.id !== viewerId && isActive(p.powers, 'invisible', room.qIndex);
         const r = results?.perPlayer[p.id] ?? null;
+        const powers = showLive ? activePowers(p.powers, room.qIndex) : r?.powers ?? [];
         return {
           id: p.id, name: p.name, tag: p.tag, color: p.color, score: p.score, online: !!p.conn,
-          x: live ? p.x : r ? r.x : null,
-          y: live ? p.y : r ? r.y : null,
+          x: hidden ? null : live ? p.x : r ? r.x : null,
+          y: hidden ? null : live ? p.y : r ? r.y : null,
+          hidden,
+          // Power-ups are private: only you ever learn what you used.
+          powers: p.id === viewerId ? powers : [],
           result: r ? { value: r.value, delta: r.delta, correct: r.correct } : results ? { value: null, delta: 0, correct: false } : null,
         };
       })
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
   };
 }
-

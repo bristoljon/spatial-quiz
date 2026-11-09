@@ -22,6 +22,7 @@ export interface Player {
   x: number | null;
   y: number | null;
   placedQ: number | null;  // which question the position belongs to
+  powers: Record<string, { round: number; q: number }>; // last use of each power-up
 }
 
 export interface Conn {
@@ -37,6 +38,7 @@ export interface PlayerResult {
   value: unknown;
   delta: number;
   correct: boolean;
+  powers: string[];  // power-ups active on this question
 }
 
 export interface Results {

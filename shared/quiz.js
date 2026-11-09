@@ -4,6 +4,9 @@
 // Every question is answered by moving your avatar on the board. Where your
 // avatar sits when the clock hits zero is your answer.
 //
+// Questions are grouped into rounds. Each player gets one of each power-up
+// (see powers.js) per round.
+//
 //   choice  options -> zones on a grid. Stand in the right one.
 //           { options: [{id,text}], answer: id }
 //   range   a number line. Score falls off with distance from the answer.
@@ -17,7 +20,11 @@ export const quiz = {
   id: 'spatial-demo-1',
   title: 'Spatial Quiz',
   subtitle: 'Move to answer',
-  questions: [
+  rounds: [
+    {
+      id: 'r1',
+      title: 'Warm-up',
+      questions: [
     {
       id: 'q1', type: 'choice', points: 10, timeLimit: 20,
       prompt: 'Warm-up. Which of these is the tallest?',
@@ -52,6 +59,12 @@ export const quiz = {
       exact: 0.03, zeroAt: 0.35,
       note: 'June 2007, $499 for the 4GB model on a two-year contract.',
     },
+      ],
+    },
+    {
+      id: 'r2',
+      title: 'Harder',
+      questions: [
     {
       id: 'q5', type: 'choice', points: 10, timeLimit: 20,
       prompt: 'Which planet has the most moons?',
@@ -85,5 +98,13 @@ export const quiz = {
       answer: 'left',
       note: 'True. Two pump blood to the gills, one to the rest of the body. Their blood is blue.',
     },
+      ],
+    },
   ],
 };
+
+// Flat list used by the engine. Each question knows its round so power-ups
+// can replenish when the round changes.
+export const questions = quiz.rounds.flatMap((r, round) =>
+  r.questions.map((q, indexInRound) => ({ ...q, round, roundTitle: r.title, indexInRound, roundTotal: r.questions.length })),
+);

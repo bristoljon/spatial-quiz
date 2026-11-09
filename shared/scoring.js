@@ -59,3 +59,8 @@ export function publicQuestion(q, index, total) {
   const { answer, note, exact, zeroAt, ...rest } = q;
   return { ...rest, index, total };
 }
+
+// What the Reveal power-up hands a player: just the answer, no note.
+export function hintFor(q) {
+  return { answer: q.answer };
+}

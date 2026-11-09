@@ -48,7 +48,7 @@ export function useRoom({ onOpen, onMessage } = {}) {
               ...msg,
               players: msg.players.map((p) => {
                 const old = byId.get(p.id);
-                return old && p.x === null && old.x !== null && msg.room.phase === 'question' ? { ...p, x: old.x, y: old.y } : p;
+                return old && !p.hidden && p.x === null && old.x !== null && msg.room.phase === 'question' ? { ...p, x: old.x, y: old.y } : p;
               }),
             };
           });

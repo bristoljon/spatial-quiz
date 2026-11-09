@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { Core, GRACE_MS } from '../lambda/core.js';
 import { MemStore } from './mem-store.js';
 import type { Transport } from '../lambda/types.js';
-import { quiz } from '../../shared/quiz.js';
+import { questions } from '../../shared/quiz.js';
 import { zonesFor, rangeX, xyPosition } from '../../shared/spatial.js';
 
 const inbox = new Map<string, any[]>();
@@ -45,13 +45,14 @@ assert.notEqual(st.players.find((p: any) => p.id === idd).color, '#ff7a59');
 await core.onMessage(a, JSON.stringify({ type: 'host:start' }));
 assert.equal(last(host, 'state').room.phase, 'lobby');
 
-const expectScore = async (positions: Record<string, { x: number; y: number }>, expected: Record<string, number>) => {
+const expectScore = async (positions: Record<string, { x: number; y: number }>, expected: Record<string, number>, powers: Record<string, string | string[]> = {}) => {
   await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
   st = last(host, 'state');
   assert.equal(st.room.phase, 'question');
-  const q = quiz.questions[st.room.qIndex];
+  const q = questions[st.room.qIndex];
   assert.equal(st.question.answer, undefined, 'answers must not leak');
   assert.equal(timers.at(-1)!.fireAt, st.room.endsAt + GRACE_MS);
+  for (const [conn, ps] of Object.entries(powers)) for (const power of ([] as string[]).concat(ps)) await core.onMessage(conn, JSON.stringify({ type: 'player:power', power }));
   for (const [conn, p] of Object.entries(positions)) await core.onMessage(conn, JSON.stringify({ type: 'player:move', ...p }));
   // Host saw the live positions.
   const pos = last(host, 'pos');
@@ -70,38 +71,74 @@ const expectScore = async (positions: Record<string, { x: number; y: number }>, 
 };
 
 // q1 choice: a in correct zone, b in wrong zone, c never moves
-const q1 = quiz.questions[0] as any;
+const q1 = questions[0] as any;
 const z = zonesFor(q1.options);
 const centre = (zone: any) => ({ x: zone.x + zone.w / 2, y: zone.y + zone.h / 2 });
-await expectScore({ a: centre(z.find((zz: any) => zz.id === q1.answer)), b: centre(z.find((zz: any) => zz.id !== q1.answer)) }, { a: 10, b: 0, c: 0 });
+inbox.get(b)!.length = 0;
+await expectScore({ a: centre(z.find((zz: any) => zz.id === q1.answer)), b: centre(z.find((zz: any) => zz.id !== q1.answer)) }, { a: 10, b: 0, c: 0 }, { a: 'invisible' });
+// During the question (look at the last state before the reveal) a was hidden from b and the host.
+const preReveal = (id: string) => [...inbox.get(id)!].filter((m) => m.type === 'state' && m.room.phase === 'question').at(-1);
+assert.equal(preReveal(host).players.find((p: any) => p.id === ida).hidden, true);
+assert.equal(preReveal(host).players.find((p: any) => p.id === ida).x, null);
+assert.equal(preReveal(b).players.find((p: any) => p.id === ida).hidden, true);
+assert.equal(preReveal(a).players.find((p: any) => p.id === ida).hidden, false);
+assert.equal(preReveal(a).me.powers.invisible, 'active');
+assert.ok(!inbox.get(b)!.some((m) => m.type === 'pos' && m.id === ida), 'no pos messages for the invisible player reach others');
+assert.ok(inbox.get(b)!.some((m) => m.type === 'pos' && m.id === idb), 'own moves are echoed');
+// On reveal everyone is visible again, with the power-up listed.
+assert.equal(st.players.find((p: any) => p.id === ida).hidden, false);
+assert.ok(typeof st.players.find((p: any) => p.id === ida).x === 'number');
+assert.deepEqual(st.players.find((p: any) => p.id === ida).powers, [], 'host never learns which power-ups were used');
+assert.deepEqual(last(a, 'state').players.find((p: any) => p.id === ida).powers, ['invisible'], 'but you see your own');
+assert.deepEqual(last(b, 'state').players.find((p: any) => p.id === ida).powers, []);
 
 // q2 range: a exact, b 30 off (half way to zeroAt=60 -> ~half points), c way off
-const q2 = quiz.questions[1] as any;
+const q2 = questions[1] as any;
 await expectScore(
   { a: { x: rangeX(q2, 206), y: 0.5 }, b: { x: rangeX(q2, 236), y: 0.5 }, c: { x: rangeX(q2, 400), y: 0.5 } },
-  { a: 10, b: 5, c: 0 },
+  { a: 20, b: 5, c: 0 },
+  { a: 'double', b: 'reveal' },
 );
+assert.equal(preReveal(b).me.hint.answer, 206, 'reveal hands over the answer');
+assert.equal(preReveal(a).me.hint, null);
+assert.equal(preReveal(host).players.find((p: any) => p.id === ida).powers.length, 0, 'double down is private too');
+assert.equal(preReveal(a).players.find((p: any) => p.id === ida).powers[0], 'double');
+
 
 // q3 wager: a all-in correct, b all-in wrong, c sits on the line
-await expectScore({ a: { x: 0.02, y: 0.5 }, b: { x: 0.98, y: 0.5 }, c: { x: 0.5, y: 0.5 } }, { a: 10, b: -10, c: 0 });
+inbox.get(a)!.length = 0;
+await expectScore({ a: { x: 0.02, y: 0.5 }, b: { x: 0.98, y: 0.5 }, c: { x: 0.5, y: 0.5 } }, { a: 10, b: -10, c: 0 }, { a: 'invisible', b: 'double', c: 'double' });
+assert.match(last(a, 'error').message, /Already used/);
+assert.equal(preReveal(a).me.powers.invisible, 'used');
+// Double down only doubles gains: b's all-in loss stays at -10.
+
 
 // q4 xy: a on target, b far away
-const q4 = quiz.questions[3] as any;
+const q4 = questions[3] as any;
 const t = xyPosition(q4, q4.answer);
 await expectScore({ a: t, b: { x: 0.95, y: 0.95 } }, { a: 12, b: 0 });
 
+// Round 2 starts at q5: power-ups replenish, and Reveal + Double down may stack.
+const q5 = questions[4] as any;
+assert.equal(q5.round, 1);
+const z5 = zonesFor(q5.options);
+await expectScore({ a: centre(z5.find((zz: any) => zz.id === q5.answer)), b: centre(z5.find((zz: any) => zz.id === q5.answer)) }, { a: 10, b: 20 }, { a: 'invisible', b: ['reveal', 'double'] });
+assert.equal(preReveal(a).me.powers.invisible, 'active', 'replenished in round 2');
+assert.deepEqual(last(b, 'state').players.find((p: any) => p.id === idb).powers.sort(), ['double', 'reveal']);
+
+
 st = last(host, 'state');
-assert.deepEqual(st.players.filter((p: any) => p.name !== 'Dee').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 42], ['Cy Lee', 0], ['Bob', -5]]);
+assert.deepEqual(st.players.filter((p: any) => p.name !== 'Dee').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 62], ['Bob', 15], ['Cy Lee', 0]]);
 
 // Reconnect keeps score
 inbox.delete(a);
 await core.onDisconnect(a);
 const a2 = open('a2');
 await core.onMessage(a2, JSON.stringify({ type: 'player:join', code, playerId: ida }));
-assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).score, 42);
+assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).score, 62);
 
 // Run to the end
-for (let i = 4; i < quiz.questions.length; i++) {
+for (let i = 5; i < questions.length; i++) {
   await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
   await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
 }

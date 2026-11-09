@@ -8,7 +8,7 @@ const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth l
 
 // The playing surface. Draws the question's geometry, every player's avatar,
 // and (when interactive) lets this player drag their own avatar around.
-export default function Board({ question: q, players, meId, reveal, interactive = false, onMove, size = 'md' }) {
+export default function Board({ question: q, players, meId, reveal, hint = null, interactive = false, onMove, size = 'md' }) {
   const ref = useRef(null);
   const [drag, setDrag] = useState(null);   // optimistic own position while the pointer is down
   const [hover, setHover] = useState(null); // desktop: value under the cursor before clicking
@@ -93,10 +93,10 @@ export default function Board({ question: q, players, meId, reveal, interactive 
       onPointerCancel={onPointerUp}
       onPointerLeave={onPointerLeave}
     >
-      {q.type === 'choice' && <ChoiceLayer q={q} reveal={reveal} />}
-      {q.type === 'range' && <RangeLayer q={q} reveal={reveal} mine={interactive && !reveal ? myPos : null} hover={hover} />}
-      {q.type === 'xy' && <XyLayer q={q} reveal={reveal} />}
-      {q.type === 'wager' && <WagerLayer q={q} reveal={reveal} />}
+      {q.type === 'choice' && <ChoiceLayer q={q} reveal={reveal} hint={hint} />}
+      {q.type === 'range' && <RangeLayer q={q} reveal={reveal} hint={hint} mine={interactive && !reveal ? myPos : null} hover={hover} />}
+      {q.type === 'xy' && <XyLayer q={q} reveal={reveal} hint={hint} />}
+      {q.type === 'wager' && <WagerLayer q={q} reveal={reveal} hint={hint} />}
 
       <div className="avatars">
         {shown.map((p) => (
@@ -108,6 +108,8 @@ export default function Board({ question: q, players, meId, reveal, interactive 
             dim={!!reveal && p.result && !p.result.correct && p.result.delta <= 0}
             badge={reveal && p.result ? p.result.delta : null}
             label={labelFor(p)}
+            ghost={!reveal && p.id === meId && (p.powers || []).includes('invisible')}
+            powers={p.powers}
             style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
           />
         ))}
@@ -123,13 +125,13 @@ export default function Board({ question: q, players, meId, reveal, interactive 
   );
 }
 
-function ChoiceLayer({ q, reveal }) {
+function ChoiceLayer({ q, reveal, hint }) {
   const zones = zonesFor(q.options);
   return (
     <div className="layer">
       {zones.map((z) => {
         const opt = q.options.find((o) => o.id === z.id);
-        const cls = reveal ? (reveal.answer === z.id ? 'correct' : 'wrong') : '';
+        const cls = reveal ? (reveal.answer === z.id ? 'correct' : 'wrong') : hint && hint.answer === z.id ? 'hinted' : '';
         return (
           <div key={z.id} className={`zone ${cls}`} style={{ left: pct(z.x), top: pct(z.y), width: pct(z.w), height: pct(z.h) }}>
             <span>{opt.text}</span>
@@ -140,7 +142,7 @@ function ChoiceLayer({ q, reveal }) {
   );
 }
 
-function RangeLayer({ q, reveal, mine, hover }) {
+function RangeLayer({ q, reveal, hint, mine, hover }) {
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => ({ t, v: q.min + t * (q.max - q.min) }));
   const marker = (p, cls) => (
     <div className={`my-marker ${cls}`} style={{ left: pct(rangeX(q, rangeValue(q, p))) }}>
@@ -158,6 +160,11 @@ function RangeLayer({ q, reveal, mine, hover }) {
       {hover && !mine && marker(hover, 'ghost')}
       {hover && mine && marker(hover, 'ghost')}
       {mine && marker(mine, '')}
+      {hint && !reveal && (
+        <div className="answer-marker hinted" style={{ left: pct(rangeX(q, hint.answer)) }}>
+          <span>🔍 {fmt(hint.answer, q.unit)}</span>
+        </div>
+      )}
       {reveal && (
         <>
           {reveal.zeroAt > 0 && <div className="band zero" style={{ left: pct(rangeX(q, reveal.answer - reveal.zeroAt)), width: pct(rangeX(q, reveal.answer + reveal.zeroAt) - rangeX(q, reveal.answer - reveal.zeroAt)) }} />}
@@ -171,9 +178,10 @@ function RangeLayer({ q, reveal, mine, hover }) {
   );
 }
 
-function XyLayer({ q, reveal }) {
+function XyLayer({ q, reveal, hint }) {
   const { x: ax, y: ay } = q.axes;
   const target = reveal ? xyPosition(q, reveal.answer) : null;
+  const hinted = hint && !reveal ? xyPosition(q, hint.answer) : null;
   return (
     <div className="layer">
       <div className="xy-frame" style={{ left: pct(XY_PAD.x), top: pct(XY_PAD.y), right: pct(XY_PAD.x), bottom: pct(XY_PAD.y) }}>
@@ -190,6 +198,11 @@ function XyLayer({ q, reveal }) {
         <div className="axis-label x">{ax.label} →</div>
         <div className="axis-label y">↑ {ay.label}</div>
       </div>
+      {hinted && (
+        <div className="target hinted" style={{ left: pct(hinted.x), top: pct(hinted.y) }}>
+          <span>🔍 {fmt(hint.answer.x)} · {fmt(hint.answer.y)}</span>
+        </div>
+      )}
       {target && (
         <>
           <Ring cx={target.x} cy={target.y} r={reveal.zeroAt} cls="zero" />
@@ -221,9 +234,9 @@ function Ring({ cx, cy, r, cls }) {
   return <div className={`ring ${cls}`} style={{ left: pct(cx), top: pct(cy), width: pct(2 * r), height: pct(2 * r * BOARD_ASPECT) }} />;
 }
 
-function WagerLayer({ q, reveal }) {
+function WagerLayer({ q, reveal, hint }) {
   const side = (which) => {
-    const cls = reveal ? (reveal.answer === which ? 'correct' : 'wrong') : '';
+    const cls = reveal ? (reveal.answer === which ? 'correct' : 'wrong') : hint && hint.answer === which ? 'hinted' : '';
     return (
       <div className={`half ${which} ${cls}`}>
         <span className="text">{q[which].text}</span>

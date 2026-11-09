@@ -21,7 +21,22 @@ right/wrong:
 | `xy`     | Two axes (e.g. year vs price)           | Same falloff, by distance on the board                          |
 | `wager`  | Two halves; distance from the middle is your stake | Win or **lose** `points × stake`                      |
 
-Questions live in [shared/quiz.js](shared/quiz.js). Answers never leave the server.
+Questions live in [shared/quiz.js](shared/quiz.js), grouped into rounds.
+Answers never leave the server.
+
+### Power-ups
+
+Each player gets one of each per round (they replenish when a new round starts):
+
+| Power-up        | Effect                                                                 |
+|-----------------|------------------------------------------------------------------------|
+| 👻 Invisibility | Your avatar disappears from every other screen, including the big one, until the reveal. The server stops sending your position to anyone but you. |
+| 🔍 Reveal       | The real answer is marked on your own board.                            |
+| ⚡ Double down  | Any points you earn on this question are doubled. Losses are not.       |
+
+They stack. Keys **1 / 2 / 3** on a keyboard. Power-ups are private: the
+server only tells you about your own, so nobody else (including the big
+screen) can see what you used.
 
 ## Run it locally (no AWS needed)
 
@@ -99,6 +114,9 @@ screen ─ws──┘        ▲                         └── Step Function
   everyone in the room.
 - On `host:next` the server stamps `endsAt`, clears everyone's position, starts
   a timer execution, and broadcasts the question (without the answer).
+- State is built per viewer: you always get your own position, power-up
+  status and any Reveal hint, while invisible players are stripped out of
+  everyone else's copy.
 - When the timer fires (or the host presses **E**), `finalize` scores every
   stored position with [shared/scoring.js](shared/scoring.js), writes the
   reveal with a conditional update so it can only happen once, and broadcasts.

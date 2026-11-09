@@ -4,6 +4,9 @@ import Board from '../components/Board.jsx';
 import Timer from '../components/Timer.jsx';
 import Avatar from '../components/Avatar.jsx';
 import Leaderboard from '../components/Leaderboard.jsx';
+import PowerBar from '../components/PowerBar.jsx';
+import RoundHead from '../components/RoundHead.jsx';
+import { POWERS } from '../../../shared/powers.js';
 import { describeAnswer, signed } from '../format.js';
 import { COLORS, normaliseTag, initialsOf, graphemes } from '../../../shared/avatar.js';
 
@@ -50,6 +53,7 @@ export default function Player() {
   };
   const leave = () => { localStorage.removeItem(KEY); setSaved(null); location.href = '/'; };
   const onMove = useCallback((p) => send({ type: 'player:move', x: p.x, y: p.y }), [send]);
+  const usePower = useCallback((power) => { clearError(); send({ type: 'player:power', power }); }, [send, clearError]);
 
   const inRoom = saved?.playerId && state && state.room.code === saved.code;
   const me = inRoom ? state.players.find((p) => p.id === saved.playerId) : null;
@@ -59,6 +63,8 @@ export default function Player() {
   useEffect(() => {
     if (phase !== 'question' || !me) return;
     const onKey = (e) => {
+      const pw = POWERS.find((p) => p.key === e.key);
+      if (pw) { if (state?.me?.powers?.[pw.id] === 'available') usePower(pw.id); return; }
       const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
       if (!d) return;
       e.preventDefault();
@@ -68,7 +74,7 @@ export default function Player() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, me?.x, me?.y, onMove]);
+  }, [phase, me?.x, me?.y, onMove, usePower, state?.me?.powers]);
 
   if (!inRoom) {
     return (
@@ -127,6 +133,10 @@ export default function Player() {
           <p className="muted">Room {room.code} · {players.length} joined</p>
           <p>When a question appears, <b>click or drag anywhere on the board</b> to move your avatar. Where you are when the clock hits zero is your answer.</p>
           <p className="muted">On a keyboard, arrow keys nudge you (hold shift for bigger steps).</p>
+          <div className="power-intro">
+            {POWERS.map((p) => <div key={p.id}><span className="icon">{p.icon}</span><b>{p.name}</b> <span className="muted">{p.desc}</span></div>)}
+            <p className="muted">One of each per round.</p>
+          </div>
           <div className="avatar-grid">
             {players.map((p) => <div key={p.id} className="lobby-player"><Avatar player={p} size="md" me={p.id === saved.playerId} /><span>{p.name}</span></div>)}
           </div>
@@ -138,12 +148,16 @@ export default function Player() {
       {(room.phase === 'question' || room.phase === 'reveal') && q && (
         <section className="stage">
           <div className="question-head">
-            <span className="qnum">Q{q.index + 1}/{q.total} · {q.points} pts</span>
+            <RoundHead q={q} phase={room.phase} />
             <h2>{q.prompt}</h2>
             {room.phase === 'question' && <Timer endsAt={room.endsAt} timeLimit={q.timeLimit} now={now} />}
           </div>
           <div className="stage-body">
-            <Board question={q} players={players} meId={saved.playerId} reveal={reveal} interactive={room.phase === 'question'} onMove={onMove} />
+            <div className="board-col">
+              <Board question={q} players={players} meId={saved.playerId} reveal={reveal} hint={state.me?.hint} interactive={room.phase === 'question'} onMove={onMove} />
+              {room.phase === 'question' && <PowerBar status={state.me?.powers} onUse={usePower} />}
+              {lastError && <p className="error">{lastError}</p>}
+            </div>
             <aside className="side">
               {room.phase === 'reveal' && (
                 <div className={`result-card ${me?.result?.delta > 0 ? 'pos' : me?.result?.delta < 0 ? 'neg' : ''}`}>
@@ -151,6 +165,7 @@ export default function Player() {
                   <div>
                     <div className="muted">Answer: <b>{describeAnswer(q, reveal)}</b></div>
                     {me?.result?.value === null && <div className="muted">You didn't place in time.</div>}
+                    {me?.powers?.length > 0 && <div className="muted">Used: {me.powers.map((id) => POWERS.find((p) => p.id === id)?.name).join(' + ')}</div>}
                     {reveal?.note && <div className="note">{reveal.note}</div>}
                   </div>
                 </div>
