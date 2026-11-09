@@ -4,6 +4,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { quiz } from '../../shared/quiz.js';
 import { scorePosition, revealFor, publicQuestion } from '../../shared/scoring.js';
 import { clamp01 } from '../../shared/spatial.js';
+import { normaliseTag, assignColor } from '../../shared/avatar.js';
 import type { Store, Transport, Room, Player, Conn, Results, PlayerResult } from './types.js';
 
 // Moves arriving up to this long after endsAt still count (network latency).
@@ -150,7 +151,6 @@ export class Core {
     if (!room) return this.transport.send(connId, { type: 'error', message: 'No room with that code', fatal: true });
 
     const name = String(msg.name || '').trim().slice(0, 20);
-    const emoji = EMOJI_RE.test(String(msg.emoji || '')) ? String(msg.emoji) : '🙂';
     let player: Player | null = null;
     if (typeof msg.playerId === 'string') player = await this.store.getPlayer(code, msg.playerId);
 
@@ -160,8 +160,11 @@ export class Core {
       player.conn = connId;
     } else {
       if (!name) return this.transport.send(connId, { type: 'error', message: 'Pick a name' });
+      const tag = normaliseTag(msg.tag, name);
+      const others = await this.store.listPlayers(code);
+      const color = assignColor(String(msg.color || ''), tag, others);
       player = {
-        room: code, id: randomUUID(), name, emoji, initials: initialsOf(name),
+        room: code, id: randomUUID(), name, tag, color,
         score: 0, conn: connId, x: null, y: null, placedQ: null,
       };
       await this.store.putPlayer(player);
@@ -179,7 +182,7 @@ export class Core {
     if (Date.now() > room.endsAt + GRACE_MS) return;
     const x = clamp01(msg.x), y = clamp01(msg.y);
     await this.store.updatePlayer(room.code, conn.playerId, { x, y, placedQ: room.qIndex });
-    await this.broadcast(room, { type: 'pos', id: conn.playerId, x, y }, connId);
+    await this.broadcast(room, { type: 'pos', id: conn.playerId, x, y });
   }
 
   // --------------------------------------------------------------- finalize
@@ -257,7 +260,7 @@ export function buildState(room: Room, players: Player[]) {
         const live = showLive && p.placedQ === room.qIndex;
         const r = results?.perPlayer[p.id] ?? null;
         return {
-          id: p.id, name: p.name, emoji: p.emoji, initials: p.initials, score: p.score, online: !!p.conn,
+          id: p.id, name: p.name, tag: p.tag, color: p.color, score: p.score, online: !!p.conn,
           x: live ? p.x : r ? r.x : null,
           y: live ? p.y : r ? r.y : null,
           result: r ? { value: r.value, delta: r.delta, correct: r.correct } : results ? { value: null, delta: 0, correct: false } : null,
@@ -267,8 +270,3 @@ export function buildState(room: Room, players: Player[]) {
   };
 }
 
-function initialsOf(name: string) {
-  const parts = name.split(/\s+/).filter(Boolean);
-  const s = parts.length >= 2 ? parts[0][0] + parts[parts.length - 1][0] : name.slice(0, 2);
-  return s.toUpperCase();
-}

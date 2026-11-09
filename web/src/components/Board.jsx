@@ -1,19 +1,25 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import Avatar from './Avatar.jsx';
 import { describe, fmt } from '../format.js';
-import { zonesFor, rangeX, xyPosition, RANGE_PAD, XY_PAD, WAGER_FULL_AT, BOARD_ASPECT } from '../../../shared/spatial.js';
+import { zonesFor, rangeX, rangeValue, xyPosition, RANGE_PAD, XY_PAD, WAGER_FULL_AT, BOARD_ASPECT } from '../../../shared/spatial.js';
 
 const SEND_EVERY_MS = 70;
+const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth labelling
 
 // The playing surface. Draws the question's geometry, every player's avatar,
 // and (when interactive) lets this player drag their own avatar around.
 export default function Board({ question: q, players, meId, reveal, interactive = false, onMove, size = 'md' }) {
   const ref = useRef(null);
-  const [drag, setDrag] = useState(null); // local optimistic position while dragging
+  const [drag, setDrag] = useState(null);   // optimistic own position while the pointer is down
+  const [hover, setHover] = useState(null); // desktop: value under the cursor before clicking
+  const dragging = useRef(false);
   const lastSent = useRef(0);
   const pending = useRef(null);
 
-  useEffect(() => setDrag(null), [q?.id, reveal]);
+  const me = players.find((p) => p.id === meId);
+  useEffect(() => { setDrag(null); setHover(null); }, [q?.id, reveal]);
+  // Once the server echoes our final position, drop the optimistic override.
+  useEffect(() => { if (!dragging.current) setDrag(null); }, [me?.x, me?.y]);
 
   const toBoard = useCallback((ev) => {
     const r = ref.current.getBoundingClientRect();
@@ -32,25 +38,28 @@ export default function Board({ question: q, players, meId, reveal, interactive 
   };
 
   const onPointerDown = (ev) => {
-    if (!interactive) return;
+    if (!interactive || ev.button > 0) return;
     ev.currentTarget.setPointerCapture(ev.pointerId);
+    dragging.current = true;
     const p = toBoard(ev);
-    setDrag(p);
+    setDrag(p); setHover(null);
     push(p, true);
   };
   const onPointerMove = (ev) => {
-    if (!interactive || !ev.currentTarget.hasPointerCapture(ev.pointerId)) return;
+    if (!interactive) return;
     const p = toBoard(ev);
-    setDrag(p);
-    push(p, false);
+    if (dragging.current) { setDrag(p); push(p, false); }
+    else if (ev.pointerType === 'mouse') setHover(p);
   };
   const onPointerUp = (ev) => {
-    if (!interactive) return;
+    if (!interactive || !dragging.current) return;
     ev.currentTarget.releasePointerCapture(ev.pointerId);
+    dragging.current = false;
     const p = toBoard(ev);
     setDrag(p);
     push(p, true);
   };
+  const onPointerLeave = () => setHover(null);
 
   // Flush a throttled move so the last position always lands.
   useEffect(() => {
@@ -60,9 +69,18 @@ export default function Board({ question: q, players, meId, reveal, interactive 
 
   if (!q) return <div className={`board ${size} empty`} ref={ref} />;
 
-  const me = players.find((p) => p.id === meId);
-  const shown = players.map((p) => (p.id === meId && drag ? { ...p, x: drag.x, y: drag.y } : p)).filter((p) => p.x !== null && p.x !== undefined);
+  const shown = players
+    .map((p) => (p.id === meId && drag ? { ...p, x: drag.x, y: drag.y } : p))
+    .filter((p) => p.x !== null && p.x !== undefined);
   const myPos = me ? (drag ?? (me.x !== null ? { x: me.x, y: me.y } : null)) : null;
+  // Live: only your own value (others' numbers would be noisy and easy to copy).
+  // Reveal: everyone's value, next to their score badge.
+  const labelFor = (p) => {
+    if (!LABELLED.has(q.type)) return null;
+    if (reveal) return describe(q, p);
+    if (p.id === meId && interactive && q.type !== 'range') return describe(q, p); // range shows the line marker instead
+    return null;
+  };
 
   return (
     <div
@@ -73,9 +91,10 @@ export default function Board({ question: q, players, meId, reveal, interactive 
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onPointerLeave={onPointerLeave}
     >
       {q.type === 'choice' && <ChoiceLayer q={q} reveal={reveal} />}
-      {q.type === 'range' && <RangeLayer q={q} reveal={reveal} />}
+      {q.type === 'range' && <RangeLayer q={q} reveal={reveal} mine={interactive && !reveal ? myPos : null} hover={hover} />}
       {q.type === 'xy' && <XyLayer q={q} reveal={reveal} />}
       {q.type === 'wager' && <WagerLayer q={q} reveal={reveal} />}
 
@@ -88,13 +107,17 @@ export default function Board({ question: q, players, meId, reveal, interactive 
             size={size === 'lg' ? 'md' : 'sm'}
             dim={!!reveal && p.result && !p.result.correct && p.result.delta <= 0}
             badge={reveal && p.result ? p.result.delta : null}
+            label={labelFor(p)}
             style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
           />
         ))}
       </div>
 
+      {interactive && !reveal && hover && !drag && q.type !== 'range' && (
+        <div className="hover-readout" style={{ left: `${hover.x * 100}%`, top: `${hover.y * 100}%` }}>{describe(q, hover)}</div>
+      )}
       {interactive && !reveal && (
-        <div className="readout">{myPos ? describe(q, myPos) : 'Drag anywhere to place yourself'}</div>
+        <div className="readout">{myPos ? describe(q, myPos) : 'Click or drag anywhere to place yourself'}</div>
       )}
     </div>
   );
@@ -117,8 +140,13 @@ function ChoiceLayer({ q, reveal }) {
   );
 }
 
-function RangeLayer({ q, reveal }) {
+function RangeLayer({ q, reveal, mine, hover }) {
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => ({ t, v: q.min + t * (q.max - q.min) }));
+  const marker = (p, cls) => (
+    <div className={`my-marker ${cls}`} style={{ left: pct(rangeX(q, rangeValue(q, p))) }}>
+      <span>{fmt(rangeValue(q, p), q.unit)}</span>
+    </div>
+  );
   return (
     <div className="layer">
       <div className="range-line" style={{ left: pct(RANGE_PAD), right: pct(RANGE_PAD) }} />
@@ -127,6 +155,9 @@ function RangeLayer({ q, reveal }) {
           <i /><span>{fmt(v, q.unit)}</span>
         </div>
       ))}
+      {hover && !mine && marker(hover, 'ghost')}
+      {hover && mine && marker(hover, 'ghost')}
+      {mine && marker(mine, '')}
       {reveal && (
         <>
           {reveal.zeroAt > 0 && <div className="band zero" style={{ left: pct(rangeX(q, reveal.answer - reveal.zeroAt)), width: pct(rangeX(q, reveal.answer + reveal.zeroAt) - rangeX(q, reveal.answer - reveal.zeroAt)) }} />}

@@ -1,13 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRoom } from '../useRoom.js';
 import Board from '../components/Board.jsx';
 import Timer from '../components/Timer.jsx';
 import Avatar from '../components/Avatar.jsx';
 import Leaderboard from '../components/Leaderboard.jsx';
 import { describeAnswer, signed } from '../format.js';
+import { COLORS, normaliseTag, initialsOf, graphemes } from '../../../shared/avatar.js';
 
 const KEY = 'sq:player';
-const EMOJI = ['🦊', '🐸', '🐙', '🦄', '🐝', '🦖', '🐧', '🦉', '🐢', '🦩', '🐳', '🦔', '🍕', '🌮', '🍩', '🧀', '🚀', '🛸', '🎸', '🎲', '🔥', '⚡', '🌈', '🍄'];
+const QUICK = ['🦊', '🐸', '🐙', '🦄', '🐝', '🦖', '🐧', '🦉', '🍕', '🚀', '⚡', '🔥'];
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; } };
 
 export default function Player() {
@@ -15,12 +16,14 @@ export default function Player() {
   const params = new URLSearchParams(location.search);
   const [code, setCode] = useState((params.get('c') || saved?.code || '').toUpperCase());
   const [name, setName] = useState(saved?.name || '');
-  const [emoji, setEmoji] = useState(saved?.emoji || EMOJI[Math.floor(Math.random() * EMOJI.length)]);
+  const [tag, setTag] = useState(saved?.tag || '');
+  const [tagEdited, setTagEdited] = useState(!!saved?.tag);
+  const [color, setColor] = useState(saved?.color || COLORS[Math.floor(Math.random() * COLORS.length)]);
   const [joining, setJoining] = useState(false);
 
   const onOpen = useCallback((send) => {
     const s = load();
-    if (s?.playerId) send({ type: 'player:join', code: s.code, playerId: s.playerId, name: s.name, emoji: s.emoji });
+    if (s?.playerId) send({ type: 'player:join', code: s.code, playerId: s.playerId, name: s.name, tag: s.tag, color: s.color });
   }, []);
   const onMessage = useCallback((msg) => {
     if (msg.type === 'player:ok') {
@@ -36,18 +39,36 @@ export default function Player() {
 
   const { status, state, send, now, lastError, clearError } = useRoom({ onOpen, onMessage });
 
+  const effectiveTag = normaliseTag(tagEdited ? tag : initialsOf(name), name);
   const join = (e) => {
     e.preventDefault();
     clearError();
     const c = code.trim().toUpperCase();
-    localStorage.setItem(KEY, JSON.stringify({ code: c, name: name.trim(), emoji }));
+    localStorage.setItem(KEY, JSON.stringify({ code: c, name: name.trim(), tag: effectiveTag, color }));
     setJoining(true);
-    send({ type: 'player:join', code: c, name: name.trim(), emoji });
+    send({ type: 'player:join', code: c, name: name.trim(), tag: effectiveTag, color });
   };
   const leave = () => { localStorage.removeItem(KEY); setSaved(null); location.href = '/'; };
   const onMove = useCallback((p) => send({ type: 'player:move', x: p.x, y: p.y }), [send]);
 
   const inRoom = saved?.playerId && state && state.room.code === saved.code;
+  const me = inRoom ? state.players.find((p) => p.id === saved.playerId) : null;
+  const phase = state?.room.phase;
+
+  // Desktop: arrow keys nudge your avatar (shift for bigger steps).
+  useEffect(() => {
+    if (phase !== 'question' || !me) return;
+    const onKey = (e) => {
+      const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+      if (!d) return;
+      e.preventDefault();
+      const step = e.shiftKey ? 0.02 : 0.005;
+      const x = me.x ?? 0.5, y = me.y ?? 0.5;
+      onMove({ x: Math.max(0, Math.min(1, x + d[0] * step)), y: Math.max(0, Math.min(1, y + d[1] * step)) });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [phase, me?.x, me?.y, onMove]);
 
   if (!inRoom) {
     return (
@@ -55,13 +76,29 @@ export default function Player() {
         <h1 className="brand">Spatial Quiz</h1>
         <form className="card join" onSubmit={join}>
           <label>Room code
-            <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={4} placeholder="ABCD" autoCapitalize="characters" autoComplete="off" required />
+            <input className="code-input" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={4} placeholder="ABCD" autoCapitalize="characters" autoComplete="off" required />
           </label>
           <label>Your name
             <input value={name} onChange={(e) => setName(e.target.value)} maxLength={20} placeholder="e.g. Sam" required />
           </label>
-          <div className="emoji-grid">
-            {EMOJI.map((e) => <button type="button" key={e} className={e === emoji ? 'on' : ''} onClick={() => setEmoji(e)}>{e}</button>)}
+          <div className="avatar-picker">
+            <Avatar player={{ tag: effectiveTag, color }} size="lg" />
+            <div className="avatar-fields">
+              <label>Avatar <span className="muted">(up to 2 characters, emoji count as one)</span>
+                <input
+                  value={tagEdited ? tag : effectiveTag}
+                  onChange={(e) => { setTagEdited(true); setTag(graphemes(e.target.value).filter((c) => !/\s/.test(c)).slice(0, 2).join('')); }}
+                  placeholder="AB"
+                  autoComplete="off"
+                />
+              </label>
+              <div className="quick">
+                {QUICK.map((e) => <button type="button" key={e} onClick={() => { setTagEdited(true); setTag(e); }}>{e}</button>)}
+              </div>
+              <div className="swatches">
+                {COLORS.map((c) => <button type="button" key={c} className={c === color ? 'on' : ''} style={{ background: c }} onClick={() => setColor(c)} aria-label={c} />)}
+              </div>
+            </div>
           </div>
           <button className="primary" disabled={status !== 'open' || joining}>{joining ? 'Joining…' : 'Join'}</button>
           {lastError && <p className="error">{lastError}</p>}
@@ -72,7 +109,6 @@ export default function Player() {
   }
 
   const { room, question: q, players, reveal } = state;
-  const me = players.find((p) => p.id === saved.playerId);
   const rank = players.findIndex((p) => p.id === saved.playerId) + 1;
 
   return (
@@ -81,6 +117,7 @@ export default function Player() {
         {me && <Avatar player={me} size="sm" me />}
         <span className="name">{me?.name}</span>
         <span className="muted">#{rank} · {me?.score ?? 0} pts</span>
+        <span className="muted room-code">Room {room.code}</span>
         <span className={`status ${status}`}>{status === 'open' ? 'live' : status}</span>
       </header>
 
@@ -88,7 +125,11 @@ export default function Player() {
         <section className="centre">
           <h2>You're in!</h2>
           <p className="muted">Room {room.code} · {players.length} joined</p>
-          <p>When a question appears, <b>drag anywhere on the board</b> to move your avatar. Where you are when the clock hits zero is your answer.</p>
+          <p>When a question appears, <b>click or drag anywhere on the board</b> to move your avatar. Where you are when the clock hits zero is your answer.</p>
+          <p className="muted">On a keyboard, arrow keys nudge you (hold shift for bigger steps).</p>
+          <div className="avatar-grid">
+            {players.map((p) => <div key={p.id} className="lobby-player"><Avatar player={p} size="md" me={p.id === saved.playerId} /><span>{p.name}</span></div>)}
+          </div>
           {!room.hostOnline && <p className="muted">Waiting for the host to connect…</p>}
           <button className="link" onClick={leave}>Leave</button>
         </section>
@@ -101,17 +142,22 @@ export default function Player() {
             <h2>{q.prompt}</h2>
             {room.phase === 'question' && <Timer endsAt={room.endsAt} timeLimit={q.timeLimit} now={now} />}
           </div>
-          <Board question={q} players={players} meId={saved.playerId} reveal={reveal} interactive={room.phase === 'question'} onMove={onMove} />
-          {room.phase === 'reveal' && (
-            <div className={`result-card ${me?.result?.delta > 0 ? 'pos' : me?.result?.delta < 0 ? 'neg' : ''}`}>
-              <div className="delta">{me?.result ? signed(me.result.delta) : '0'}</div>
-              <div>
-                <div className="muted">Answer: <b>{describeAnswer(q, reveal)}</b></div>
-                {me?.result?.value === null && <div className="muted">You didn't place in time.</div>}
-                {reveal?.note && <div className="note">{reveal.note}</div>}
-              </div>
-            </div>
-          )}
+          <div className="stage-body">
+            <Board question={q} players={players} meId={saved.playerId} reveal={reveal} interactive={room.phase === 'question'} onMove={onMove} />
+            <aside className="side">
+              {room.phase === 'reveal' && (
+                <div className={`result-card ${me?.result?.delta > 0 ? 'pos' : me?.result?.delta < 0 ? 'neg' : ''}`}>
+                  <div className="delta">{me?.result ? signed(me.result.delta) : '0'}</div>
+                  <div>
+                    <div className="muted">Answer: <b>{describeAnswer(q, reveal)}</b></div>
+                    {me?.result?.value === null && <div className="muted">You didn't place in time.</div>}
+                    {reveal?.note && <div className="note">{reveal.note}</div>}
+                  </div>
+                </div>
+              )}
+              <Leaderboard players={players} meId={saved.playerId} limit={10} showDelta={room.phase === 'reveal'} />
+            </aside>
+          </div>
         </section>
       )}
 

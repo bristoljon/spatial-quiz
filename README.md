@@ -1,9 +1,15 @@
 # Spatial Quiz
 
-A live quiz where you answer by **moving**. Everyone's avatar (emoji + initials)
-is on the same board, on the big screen and on every phone, in real time.
-Drag yourself to where you think the answer is. When the clock hits zero,
-wherever you're standing is your answer.
+A live quiz where you answer by **moving**. Everyone's avatar is on the same
+board, on the big screen and on every player's screen, in real time. Drag
+yourself to where you think the answer is. When the clock hits zero, wherever
+you're standing is your answer.
+
+Players pick a 1–2 character tag (letters, digits or an emoji) and a colour.
+The server recolours anyone whose tag and colour clash with an existing player,
+so two "AL"s are always telling apart. Works equally on a laptop (click, drag,
+or nudge with the arrow keys; hover shows the value under the cursor) and on a
+phone (touch and drag).
 
 Because answers are positions, questions can be about *proximity*, not just
 right/wrong:
@@ -107,6 +113,7 @@ transport-agnostic. The Lambda wires it to DynamoDB and API Gateway;
 an in-memory store and the `ws` package.
 
 Host keys: **space / →** start or next · **E** end the question now · **F** fullscreen.
+Player keys: **arrows** nudge your avatar, **shift + arrows** for bigger steps.
 
 ## Writing questions
 

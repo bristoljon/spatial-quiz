@@ -23,14 +23,23 @@ const { code, token } = last(host, 'host:ok');
 assert.equal(code.length, 4);
 
 const a = open('a'), b = open('b'), c = open('c');
-await core.onMessage(a, JSON.stringify({ type: 'player:join', code, name: 'Ada Lovelace', emoji: '🦊' }));
-await core.onMessage(b, JSON.stringify({ type: 'player:join', code, name: 'Bob', emoji: '🐸' }));
-await core.onMessage(c, JSON.stringify({ type: 'player:join', code: code.toLowerCase(), name: 'Cy', emoji: 'not-an-emoji' }));
+await core.onMessage(a, JSON.stringify({ type: 'player:join', code, name: 'Ada Lovelace', tag: '🦊', color: '#ff7a59' }));
+await core.onMessage(b, JSON.stringify({ type: 'player:join', code, name: 'Bob', tag: 'Bobby', color: '#ff7a59' }));
+await core.onMessage(c, JSON.stringify({ type: 'player:join', code: code.toLowerCase(), name: 'Cy Lee', tag: '  ', color: '#ff7a59' }));
 const ida = last(a, 'player:ok').playerId, idb = last(b, 'player:ok').playerId, idc = last(c, 'player:ok').playerId;
 let st = last(host, 'state');
 assert.equal(st.players.length, 3);
-assert.equal(st.players.find((p: any) => p.id === ida).initials, 'AL');
-assert.equal(st.players.find((p: any) => p.id === idc).emoji, '🙂');
+assert.equal(st.players.find((p: any) => p.id === ida).tag, '🦊');
+assert.equal(st.players.find((p: any) => p.id === idb).tag, 'Bo', 'tag trimmed to 2 graphemes');
+assert.equal(st.players.find((p: any) => p.id === idc).tag, 'CL', 'blank tag falls back to initials');
+// Same tag + same colour would clash; different tags may share a colour.
+const d = open('d');
+await core.onMessage(d, JSON.stringify({ type: 'player:join', code, name: 'Dee', tag: 'Bo', color: '#ff7a59' }));
+const idd = last(d, 'player:ok').playerId;
+st = last(host, 'state');
+assert.equal(st.players.find((p: any) => p.id === ida).color, '#ff7a59');
+assert.equal(st.players.find((p: any) => p.id === idb).color, '#ff7a59');
+assert.notEqual(st.players.find((p: any) => p.id === idd).color, '#ff7a59');
 
 // Players can't drive the game.
 await core.onMessage(a, JSON.stringify({ type: 'host:start' }));
@@ -53,7 +62,7 @@ const expectScore = async (positions: Record<string, { x: number; y: number }>, 
   assert.equal(st.room.phase, 'reveal');
   assert.equal(st.reveal.answer !== undefined, true);
   for (const [conn, delta] of Object.entries(expected)) {
-    const id = { a: ida, b: idb, c: idc }[conn];
+    const id = ({ a: ida, b: idb, c: idc } as Record<string, string>)[conn];
     const p = st.players.find((p: any) => p.id === id);
     assert.equal(p.result.delta, delta, `${q.id} ${conn}: expected ${delta}, got ${p.result.delta} (${JSON.stringify(p.result.value)})`);
   }
@@ -82,7 +91,7 @@ const t = xyPosition(q4, q4.answer);
 await expectScore({ a: t, b: { x: 0.95, y: 0.95 } }, { a: 12, b: 0 });
 
 st = last(host, 'state');
-assert.deepEqual(st.players.map((p: any) => [p.name, p.score]), [['Ada Lovelace', 42], ['Bob', -5], ['Cy', 0]].sort((x, y) => (y[1] as number) - (x[1] as number)));
+assert.deepEqual(st.players.filter((p: any) => p.name !== 'Dee').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 42], ['Cy Lee', 0], ['Bob', -5]]);
 
 // Reconnect keeps score
 inbox.delete(a);
