@@ -20,6 +20,11 @@ export const quiz = {
   id: 'spatial-demo-1',
   title: 'Spatial Quiz',
   subtitle: 'Move to answer',
+  settings: {
+    // Extra points for the correct player who settled on their answer first
+    // (by the time of their last move). 0 disables it.
+    speedBonus: 1,
+  },
   rounds: [
     {
       id: 'r1',

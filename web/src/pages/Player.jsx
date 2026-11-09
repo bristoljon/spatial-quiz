@@ -137,6 +137,7 @@ export default function Player() {
             {POWERS.map((p) => <div key={p.id}><span className="icon">{p.icon}</span><b>{p.name}</b> <span className="muted">{p.desc}</span></div>)}
             <p className="muted">One of each per round.</p>
           </div>
+          {state.quiz.speedBonus > 0 && <p className="muted">🏁 The first player to settle on the right answer gets +{state.quiz.speedBonus}. Moving again resets your time.</p>}
           <div className="avatar-grid">
             {players.map((p) => <div key={p.id} className="lobby-player"><Avatar player={p} size="md" me={p.id === saved.playerId} /><span>{p.name}</span></div>)}
           </div>
@@ -165,6 +166,7 @@ export default function Player() {
                   <div>
                     <div className="muted">Answer: <b>{describeAnswer(q, reveal)}</b></div>
                     {me?.result?.value === null && <div className="muted">You didn't place in time.</div>}
+                    {me?.result?.fastest && <div className="fastest">🏁 Fastest correct answer, +{state.quiz.speedBonus}</div>}
                     {me?.powers?.length > 0 && <div className="muted">Used: {me.powers.map((id) => POWERS.find((p) => p.id === id)?.name).join(' + ')}</div>}
                     {reveal?.note && <div className="note">{reveal.note}</div>}
                   </div>

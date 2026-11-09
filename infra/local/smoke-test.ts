@@ -75,7 +75,9 @@ const q1 = questions[0] as any;
 const z = zonesFor(q1.options);
 const centre = (zone: any) => ({ x: zone.x + zone.w / 2, y: zone.y + zone.h / 2 });
 inbox.get(b)!.length = 0;
-await expectScore({ a: centre(z.find((zz: any) => zz.id === q1.answer)), b: centre(z.find((zz: any) => zz.id !== q1.answer)) }, { a: 10, b: 0, c: 0 }, { a: 'invisible' });
+await expectScore({ a: centre(z.find((zz: any) => zz.id === q1.answer)), b: centre(z.find((zz: any) => zz.id !== q1.answer)) }, { a: 11, b: 0, c: 0 }, { a: 'invisible' });
+assert.equal(st.players.find((p: any) => p.id === ida).result.fastest, true);
+assert.equal(st.players.find((p: any) => p.id === idb).result.fastest, false);
 // During the question (look at the last state before the reveal) a was hidden from b and the host.
 const preReveal = (id: string) => [...inbox.get(id)!].filter((m) => m.type === 'state' && m.room.phase === 'question').at(-1);
 assert.equal(preReveal(host).players.find((p: any) => p.id === ida).hidden, true);
@@ -96,7 +98,7 @@ assert.deepEqual(last(b, 'state').players.find((p: any) => p.id === ida).powers,
 const q2 = questions[1] as any;
 await expectScore(
   { a: { x: rangeX(q2, 206), y: 0.5 }, b: { x: rangeX(q2, 236), y: 0.5 }, c: { x: rangeX(q2, 400), y: 0.5 } },
-  { a: 20, b: 5, c: 0 },
+  { a: 21, b: 5, c: 0 }, // doubled to 20, then +1 speed bonus (not doubled)
   { a: 'double', b: 'reveal' },
 );
 assert.equal(preReveal(b).me.hint.answer, 206, 'reveal hands over the answer');
@@ -107,7 +109,7 @@ assert.equal(preReveal(a).players.find((p: any) => p.id === ida).powers[0], 'dou
 
 // q3 wager: a all-in correct, b all-in wrong, c sits on the line
 inbox.get(a)!.length = 0;
-await expectScore({ a: { x: 0.02, y: 0.5 }, b: { x: 0.98, y: 0.5 }, c: { x: 0.5, y: 0.5 } }, { a: 10, b: -10, c: 0 }, { a: 'invisible', b: 'double', c: 'double' });
+await expectScore({ a: { x: 0.02, y: 0.5 }, b: { x: 0.98, y: 0.5 }, c: { x: 0.5, y: 0.5 } }, { a: 11, b: -10, c: 0 }, { a: 'invisible', b: 'double', c: 'double' });
 assert.match(last(a, 'error').message, /Already used/);
 assert.equal(preReveal(a).me.powers.invisible, 'used');
 // Double down only doubles gains: b's all-in loss stays at -10.
@@ -116,26 +118,26 @@ assert.equal(preReveal(a).me.powers.invisible, 'used');
 // q4 xy: a on target, b far away
 const q4 = questions[3] as any;
 const t = xyPosition(q4, q4.answer);
-await expectScore({ a: t, b: { x: 0.95, y: 0.95 } }, { a: 12, b: 0 });
+await expectScore({ a: t, b: { x: 0.95, y: 0.95 } }, { a: 13, b: 0 });
 
 // Round 2 starts at q5: power-ups replenish, and Reveal + Double down may stack.
 const q5 = questions[4] as any;
 assert.equal(q5.round, 1);
 const z5 = zonesFor(q5.options);
-await expectScore({ a: centre(z5.find((zz: any) => zz.id === q5.answer)), b: centre(z5.find((zz: any) => zz.id === q5.answer)) }, { a: 10, b: 20 }, { a: 'invisible', b: ['reveal', 'double'] });
+await expectScore({ a: centre(z5.find((zz: any) => zz.id === q5.answer)), b: centre(z5.find((zz: any) => zz.id === q5.answer)) }, { a: 11, b: 20 }, { a: 'invisible', b: ['reveal', 'double'] }); // both right; a settled first
 assert.equal(preReveal(a).me.powers.invisible, 'active', 'replenished in round 2');
 assert.deepEqual(last(b, 'state').players.find((p: any) => p.id === idb).powers.sort(), ['double', 'reveal']);
 
 
 st = last(host, 'state');
-assert.deepEqual(st.players.filter((p: any) => p.name !== 'Dee').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 62], ['Bob', 15], ['Cy Lee', 0]]);
+assert.deepEqual(st.players.filter((p: any) => p.name !== 'Dee').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 67], ['Bob', 15], ['Cy Lee', 0]]);
 
 // Reconnect keeps score
 inbox.delete(a);
 await core.onDisconnect(a);
 const a2 = open('a2');
 await core.onMessage(a2, JSON.stringify({ type: 'player:join', code, playerId: ida }));
-assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).score, 62);
+assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).score, 67);
 
 // Run to the end
 for (let i = 5; i < questions.length; i++) {

@@ -122,7 +122,7 @@ export class Core {
     const endsAt = Date.now() + q.timeLimit * 1000;
     // Everyone starts off the board for a new question.
     const players = await this.store.listPlayers(room.code);
-    await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { x: null, y: null, placedQ: null })));
+    await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { x: null, y: null, placedQ: null, placedAt: null })));
     const patch: Partial<Room> = { phase: 'question', qIndex: next, endsAt, results: null };
     await this.store.updateRoom(room.code, patch);
     await this.transport.scheduleFinalize(room.code, next, endsAt + GRACE_MS);
@@ -139,7 +139,7 @@ export class Core {
     const room = await this.requireHost(connId);
     if (!room) return;
     const players = await this.store.listPlayers(room.code);
-    await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { score: 0, x: null, y: null, placedQ: null, powers: {} })));
+    await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { score: 0, x: null, y: null, placedQ: null, placedAt: null, powers: {} })));
     const patch: Partial<Room> = { phase: 'lobby', qIndex: -1, endsAt: null, results: null };
     await this.store.updateRoom(room.code, patch);
     await this.broadcastState({ ...room, ...patch });
@@ -167,7 +167,7 @@ export class Core {
       const color = assignColor(String(msg.color || ''), tag, others);
       player = {
         room: code, id: randomUUID(), name, tag, color,
-        score: 0, conn: connId, x: null, y: null, placedQ: null, powers: {},
+        score: 0, conn: connId, x: null, y: null, placedQ: null, placedAt: null, powers: {},
       };
       await this.store.putPlayer(player);
     }
@@ -185,7 +185,7 @@ export class Core {
     const x = clamp01(msg.x), y = clamp01(msg.y);
     const player = await this.store.getPlayer(room.code, conn.playerId);
     if (!player) return;
-    await this.store.updatePlayer(room.code, player.id, { x, y, placedQ: room.qIndex });
+    await this.store.updatePlayer(room.code, player.id, { x, y, placedQ: room.qIndex, placedAt: Date.now() });
     const pos = { type: 'pos', id: player.id, x, y };
     // Invisible players' positions only ever go back to themselves.
     if (isActive(player.powers, 'invisible', room.qIndex)) await this.transport.send(connId, pos);
@@ -230,6 +230,17 @@ export class Core {
       let delta = scored.delta;
       if (powers.includes('double') && delta > 0) delta *= 2;
       perPlayer[p.id] = { x: p.x!, y: p.y!, value: scored.value, correct: scored.correct, delta, powers } as PlayerResult;
+    }
+    // Speed bonus: of the players who got it right, whoever settled first.
+    const bonus = quiz.settings?.speedBonus ?? 0;
+    if (bonus > 0) {
+      const fastest = players
+        .filter((p) => { const r = perPlayer[p.id]; return r && r.correct && r.delta > 0 && p.placedAt; })
+        .sort((a, b) => a.placedAt! - b.placedAt!)[0];
+      if (fastest) {
+        perPlayer[fastest.id]!.delta += bonus;
+        perPlayer[fastest.id]!.fastest = true;
+      }
     }
     const results: Results = { qIndex, reveal: revealFor(q), perPlayer };
     const won = await this.store.updateRoom(code, { phase: 'reveal', results, endsAt: null }, { phase: 'question', qIndex });
@@ -282,7 +293,7 @@ export function buildState(room: Room, players: Player[], viewerId: string | nul
   return {
     type: 'state',
     serverNow: Date.now(),
-    quiz: { title: quiz.title, subtitle: quiz.subtitle, total, rounds: quiz.rounds.map((r) => ({ title: r.title, count: r.questions.length })) },
+    quiz: { title: quiz.title, subtitle: quiz.subtitle, total, speedBonus: quiz.settings?.speedBonus ?? 0, rounds: quiz.rounds.map((r) => ({ title: r.title, count: r.questions.length })) },
     room: { code: room.code, phase: room.phase, qIndex: room.qIndex, endsAt: room.endsAt, hostOnline: !!room.hostConn },
     question: q && room.phase !== 'final' ? publicQuestion(q, room.qIndex, total) : null,
     reveal: results?.reveal ?? null,
@@ -305,7 +316,7 @@ export function buildState(room: Room, players: Player[], viewerId: string | nul
           hidden,
           // Power-ups are private: only you ever learn what you used.
           powers: p.id === viewerId ? powers : [],
-          result: r ? { value: r.value, delta: r.delta, correct: r.correct } : results ? { value: null, delta: 0, correct: false } : null,
+          result: r ? { value: r.value, delta: r.delta, correct: r.correct, fastest: !!r.fastest } : results ? { value: null, delta: 0, correct: false, fastest: false } : null,
         };
       })
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),

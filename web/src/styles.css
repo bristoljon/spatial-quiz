@@ -201,6 +201,7 @@ input.code-input { text-transform: uppercase; letter-spacing: 0.3em; font-weight
 .leaderboard li.me { border-color: var(--accent); }
 .leaderboard .rank { width: 1.6em; color: var(--muted); font-weight: 700; }
 .leaderboard .name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leaderboard .fastest, .result-card .fastest { color: var(--warn); font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
 .leaderboard .delta { font-weight: 700; color: var(--muted); }
 .leaderboard .delta.pos { color: var(--good); }
 .leaderboard .delta.neg { color: var(--bad); }

@@ -10,6 +10,7 @@ export default function Leaderboard({ players, meId, limit, showDelta = false })
           <span className="rank">{i + 1}</span>
           <Avatar player={p} size="sm" />
           <span className="name">{p.name}</span>
+          {showDelta && p.result?.fastest && <span className="fastest" title="Fastest correct answer">🏁</span>}
           {showDelta && p.result && <span className={`delta ${p.result.delta > 0 ? 'pos' : p.result.delta < 0 ? 'neg' : ''}`}>{signed(p.result.delta)}</span>}
           <span className="score">{p.score}</span>
         </li>

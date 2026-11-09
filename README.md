@@ -24,6 +24,12 @@ right/wrong:
 Questions live in [shared/quiz.js](shared/quiz.js), grouped into rounds.
 Answers never leave the server.
 
+### Speed bonus
+
+The correct player who settled first (by the time of their last move) gets a
+flat bonus, `settings.speedBonus` in [shared/quiz.js](shared/quiz.js), default
+1. It's added after Double down, so it isn't doubled. Set it to 0 to turn it off.
+
 ### Power-ups
 
 Each player gets one of each per round (they replenish when a new round starts):

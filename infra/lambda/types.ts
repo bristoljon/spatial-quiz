@@ -22,6 +22,7 @@ export interface Player {
   x: number | null;
   y: number | null;
   placedQ: number | null;  // which question the position belongs to
+  placedAt: number | null; // server time of the last move
   powers: Record<string, { round: number; q: number }>; // last use of each power-up
 }
 
@@ -39,6 +40,7 @@ export interface PlayerResult {
   delta: number;
   correct: boolean;
   powers: string[];  // power-ups active on this question
+  fastest?: boolean; // earned the speed bonus
 }
 
 export interface Results {
