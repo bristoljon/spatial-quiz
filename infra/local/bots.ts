@@ -96,8 +96,10 @@ class Bot {
     if (Math.random() < this.p.powerLust) {
       this.after(rnd(500, Math.max(600, settle)), () => {
         const power = pick(POWER_IDS);
-        log(`${this.name} uses ${power}`);
-        this.send({ type: 'player:power', power });
+        const target = power === 'possess' ? pick([...this.others.keys()]) : undefined;
+        if (power === 'possess' && !target) return;
+        log(`${this.name} uses ${power}${target ? ' on someone' : ''}`);
+        this.send({ type: 'player:power', power, target });
       });
     }
   }
@@ -138,7 +140,7 @@ class Bot {
       this.after(i * 70, () => {
         const t = i / steps;
         this.me = { x: clamp01(from.x + (to.x - from.x) * t + gauss() * 0.004), y: clamp01(from.y + (to.y - from.y) * t + gauss() * 0.004) };
-        this.send({ type: 'player:move', x: this.me.x, y: this.me.y });
+        this.send({ type: 'player:move', x: this.me.x, y: this.me.y, release: i === steps });
       });
     }
   }

@@ -39,8 +39,11 @@ Each player gets one of each per round (they replenish when a new round starts):
 | 👻 Invisibility | Your avatar disappears from every other screen, including the big one, until the reveal. The server stops sending your position to anyone but you. |
 | 🔍 Reveal       | The real answer is marked on your own board.                            |
 | ⚡ Double down  | Any points you earn on this question are doubled. Losses are not.       |
+| 🕹️ Possess      | Pick a victim. Your own avatar freezes while you drag theirs; where you drop them, they're locked until the reveal. |
+| 🪞 Mirror       | Everyone else sees your avatar reflected through the board's centre. On a range that flips your number; on a wager it flips your side. |
+| 🛡️ Shield       | You can't be possessed this question. A Possess aimed at you is wasted. |
 
-They stack. Keys **1 / 2 / 3** on a keyboard. Power-ups are private: the
+They stack. Keys **1–6** on a keyboard; Possess then waits for you to click a victim (Esc cancels). Power-ups are private: the
 server only tells you about your own, so nobody else (including the big
 screen) can see what you used.
 

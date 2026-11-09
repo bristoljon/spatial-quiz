@@ -5,8 +5,8 @@ import { quiz, questions } from '../../shared/quiz.js';
 import { scorePosition, revealFor, publicQuestion, hintFor } from '../../shared/scoring.js';
 import { clamp01 } from '../../shared/spatial.js';
 import { initialsOf, assignColor } from '../../shared/avatar.js';
-import { POWER_IDS, powerStatus, activePowers, isActive } from '../../shared/powers.js';
-import type { Store, Transport, Room, Player, Results, PlayerResult } from './types.js';
+import { POWER_IDS, powerStatus, activePowers, isActive, mirrored } from '../../shared/powers.js';
+import type { Store, Transport, Room, Player, Results, PlayerResult, Effect } from './types.js';
 
 // Moves arriving up to this long after endsAt still count (network latency).
 export const GRACE_MS = 1000;
@@ -56,6 +56,7 @@ export class Core {
         case 'player:join': return this.playerJoin(connId, msg);
         case 'player:move': return this.playerMove(connId, msg);
         case 'player:power': return this.playerPower(connId, msg);
+        case 'player:drop': return this.playerDrop(connId);
         case 'host:start':
         case 'host:next': return this.hostNext(connId);
         case 'host:end': return this.hostEnd(connId);
@@ -81,7 +82,7 @@ export class Core {
     }
     const room: Room = {
       code, phase: 'lobby', qIndex: -1, endsAt: null,
-      hostConn: connId, hostToken: randomUUID(), results: null, createdAt: Date.now(),
+      hostConn: connId, hostToken: randomUUID(), results: null, effects: [], createdAt: Date.now(),
     };
     await this.store.putRoom(room);
     await this.store.putConn({ id: connId, room: code, role: 'host' });
@@ -123,7 +124,7 @@ export class Core {
     // Everyone starts off the board for a new question.
     const players = await this.store.listPlayers(room.code);
     await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { x: null, y: null, placedQ: null, placedAt: null })));
-    const patch: Partial<Room> = { phase: 'question', qIndex: next, endsAt, results: null };
+    const patch: Partial<Room> = { phase: 'question', qIndex: next, endsAt, results: null, effects: [] };
     await this.store.updateRoom(room.code, patch);
     await this.transport.scheduleFinalize(room.code, next, endsAt + GRACE_MS);
     await this.broadcastState({ ...room, ...patch });
@@ -140,7 +141,7 @@ export class Core {
     if (!room) return;
     const players = await this.store.listPlayers(room.code);
     await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { score: 0, x: null, y: null, placedQ: null, placedAt: null, powers: {} })));
-    const patch: Partial<Room> = { phase: 'lobby', qIndex: -1, endsAt: null, results: null };
+    const patch: Partial<Room> = { phase: 'lobby', qIndex: -1, endsAt: null, results: null, effects: [] };
     await this.store.updateRoom(room.code, patch);
     await this.broadcastState({ ...room, ...patch });
   }
@@ -182,14 +183,46 @@ export class Core {
     const room = await this.store.getRoom(conn.room);
     if (!room || room.phase !== 'question' || !room.endsAt) return;
     if (Date.now() > room.endsAt + GRACE_MS) return;
-    const x = clamp01(msg.x), y = clamp01(msg.y);
     const player = await this.store.getPlayer(room.code, conn.playerId);
     if (!player) return;
-    await this.store.updatePlayer(room.code, player.id, { x, y, placedQ: room.qIndex, placedAt: Date.now() });
-    const pos = { type: 'pos', id: player.id, x, y };
-    // Invisible players' positions only ever go back to themselves.
-    if (isActive(player.powers, 'invisible', room.qIndex)) await this.transport.send(connId, pos);
-    else await this.broadcast(room, () => pos);
+    const effects = room.effects ?? [];
+    // Possessed or locked: your own avatar doesn't answer to you.
+    if (effects.some((e) => e.to === player.id)) return;
+    const possessing = effects.find((e) => e.from === player.id && !e.dropped);
+    const subject = possessing ? await this.store.getPlayer(room.code, possessing.to) : player;
+    if (!subject) return;
+    const x = clamp01(msg.x), y = clamp01(msg.y);
+    await this.store.updatePlayer(room.code, subject.id, { x, y, placedQ: room.qIndex, placedAt: Date.now() });
+    await this.broadcastPos(room, { ...subject, x, y });
+    if (possessing && msg.release) await this.drop(room, possessing);
+  }
+
+  private async playerDrop(connId: string) {
+    const conn = await this.store.getConn(connId);
+    if (!conn || conn.role !== 'player' || !conn.playerId) return;
+    const room = await this.store.getRoom(conn.room);
+    if (!room || room.phase !== 'question') return;
+    const possessing = (room.effects ?? []).find((e) => e.from === conn.playerId && !e.dropped);
+    if (possessing) await this.drop(room, possessing);
+  }
+
+  // Lock the victim where they are and hand control back to the possessor.
+  private async drop(room: Room, effect: Effect) {
+    const effects = (room.effects ?? []).map((e) => (e === effect || (e.from === effect.from && e.to === effect.to) ? { ...e, dropped: true } : e));
+    await this.store.updateRoom(room.code, { effects });
+    await this.broadcastState({ ...room, effects });
+  }
+
+  // A position as each viewer should see it: you always see yourself truly;
+  // invisible players are withheld from others; mirrored ones are reflected.
+  private async broadcastPos(room: Room, subject: Player) {
+    const pos = { x: subject.x!, y: subject.y! };
+    await this.broadcast(room, (t) => {
+      if (t.playerId === subject.id) return { type: 'pos', id: subject.id, ...pos };
+      if (isActive(subject.powers, 'invisible', room.qIndex)) return null;
+      const seen = isActive(subject.powers, 'mirror', room.qIndex) ? mirrored(pos) : pos;
+      return { type: 'pos', id: subject.id, ...seen };
+    });
   }
 
   private async playerPower(connId: string, msg: Msg) {
@@ -207,9 +240,25 @@ export class Core {
     const status = powerStatus(player.powers, id, q.round, room.qIndex);
     if (status === 'active') return; // already on
     if (status === 'used') return this.transport.send(connId, { type: 'error', message: 'Already used this round' });
+
+    let effects = room.effects ?? [];
+    if (id === 'possess') {
+      const target = typeof msg.target === 'string' ? await this.store.getPlayer(room.code, msg.target) : null;
+      if (!target || target.id === player.id) return this.transport.send(connId, { type: 'error', message: 'Pick someone to possess' });
+      if (effects.some((e) => e.from === player.id && !e.dropped)) return this.transport.send(connId, { type: 'error', message: 'You are already possessing someone' });
+      if (effects.some((e) => e.to === target.id)) return this.transport.send(connId, { type: 'error', message: `${target.name} is already possessed` });
+      if (isActive(target.powers, 'shield', room.qIndex)) {
+        // Blocked. The attempt still costs you the power-up.
+        await this.store.updatePlayer(room.code, player.id, { powers: { ...player.powers, possess: { round: q.round, q: room.qIndex } } });
+        await this.transport.send(connId, { type: 'error', message: `🛡️ ${target.name} is shielded. Possess wasted.` });
+        return this.broadcastState(room);
+      }
+      effects = [...effects, { type: 'possess', from: player.id, to: target.id, dropped: false }];
+      await this.store.updateRoom(room.code, { effects });
+    }
     const powers = { ...player.powers, [id]: { round: q.round, q: room.qIndex } };
     await this.store.updatePlayer(room.code, player.id, { powers });
-    await this.broadcastState(room);
+    await this.broadcastState({ ...room, effects });
   }
 
   // --------------------------------------------------------------- finalize
@@ -261,14 +310,16 @@ export class Core {
     await this.broadcast(room, (t) => buildState(room, players, t.playerId ?? null), players);
   }
 
-  private async broadcast(room: Room, build: (t: Target) => object, players?: Player[]) {
+  private async broadcast(room: Room, build: (t: Target) => object | null, players?: Player[]) {
     players = players ?? (await this.store.listPlayers(room.code));
     const targets: Target[] = [];
     if (room.hostConn) targets.push({ conn: room.hostConn });
     for (const p of players) if (p.conn) targets.push({ conn: p.conn, playerId: p.id });
     await Promise.all(
       targets.map(async (t) => {
-        const ok = await this.transport.send(t.conn, build(t));
+        const msg = build(t);
+        if (!msg) return;
+        const ok = await this.transport.send(t.conn, msg);
         if (ok) return;
         // Stale connection: forget it so we stop trying.
         await this.store.deleteConn(t.conn).catch(() => {});
@@ -283,6 +334,8 @@ export class Core {
     return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
   }
 }
+
+const pick = (e?: Effect) => (e ? { dropped: e.dropped } : null);
 
 export function buildState(room: Room, players: Player[], viewerId: string | null) {
   const total = questions.length;
@@ -301,18 +354,23 @@ export function buildState(room: Room, players: Player[], viewerId: string | nul
       ? {
           powers: Object.fromEntries(POWER_IDS.map((id) => [id, powerStatus(me.powers, id, q.round, room.qIndex)])),
           hint: showLive && isActive(me.powers, 'reveal', room.qIndex) ? hintFor(q) : null,
+          // Who you're steering, and whether someone has you.
+          possessing: showLive ? (room.effects ?? []).find((e) => e.from === me.id && !e.dropped)?.to ?? null : null,
+          possessed: showLive ? pick((room.effects ?? []).find((e) => e.to === me.id)) : null,
         }
       : null,
     players: players
       .map((p) => {
         const live = showLive && p.placedQ === room.qIndex;
         const hidden = showLive && p.id !== viewerId && isActive(p.powers, 'invisible', room.qIndex);
+        const flip = showLive && p.id !== viewerId && isActive(p.powers, 'mirror', room.qIndex);
         const r = results?.perPlayer[p.id] ?? null;
         const powers = showLive ? activePowers(p.powers, room.qIndex) : r?.powers ?? [];
+        const livePos = live && p.x !== null ? (flip ? mirrored({ x: p.x, y: p.y! }) : { x: p.x, y: p.y! }) : null;
         return {
           id: p.id, name: p.name, tag: p.tag, color: p.color, score: p.score, online: !!p.conn,
-          x: hidden ? null : live ? p.x : r ? r.x : null,
-          y: hidden ? null : live ? p.y : r ? r.y : null,
+          x: hidden ? null : live ? livePos!.x : r ? r.x : null,
+          y: hidden ? null : live ? livePos!.y : r ? r.y : null,
           hidden,
           // Power-ups are private: only you ever learn what you used.
           powers: p.id === viewerId ? powers : [],

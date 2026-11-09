@@ -122,7 +122,46 @@ assert.equal(preReveal(a).me.powers.invisible, 'used');
 // q4 xy: a on target, b far away
 const q4 = questions[3] as any;
 const t = xyPosition(q4, q4.answer);
-await expectScore({ a: t, b: { x: 0.95, y: 0.95 } }, { a: 13, b: 0 });
+
+// --- Possess / Mirror / Shield --------------------------------------------
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+st = last(host, 'state'); assert.equal(st.room.qIndex, 3);
+// c shields; b tries to possess c -> blocked and b's possess is spent
+await core.onMessage(c, JSON.stringify({ type: 'player:power', power: 'shield' }));
+await core.onMessage(b, JSON.stringify({ type: 'player:power', power: 'possess', target: idc }));
+assert.match(last(b, 'error').message, /shielded/);
+assert.equal(last(b, 'state').me.powers.possess, 'active', 'blocked possess is consumed');
+// a possesses b: a's moves move b, b's own moves are ignored
+await core.onMessage(a, JSON.stringify({ type: 'player:power', power: 'possess', target: idb }));
+assert.equal(last(a, 'state').me.possessing, idb);
+assert.deepEqual(last(b, 'state').me.possessed, { dropped: false });
+await core.onMessage(a, JSON.stringify({ type: 'player:move', x: 0.9, y: 0.9 }));
+await core.onMessage(b, JSON.stringify({ type: 'player:move', x: 0.1, y: 0.1 }));
+let pb = last(host, 'pos'); assert.equal(pb.id, idb); assert.equal(pb.x, 0.9, "possessor's move lands on the victim");
+assert.ok(!inbox.get(host)!.some((m) => m.type === 'pos' && m.x === 0.1), "victim's own move ignored");
+// a drops b at the target: b is locked there, a regains control
+await core.onMessage(a, JSON.stringify({ type: 'player:move', x: t.x, y: t.y, release: true }));
+assert.equal(last(a, 'state').me.possessing, null);
+assert.deepEqual(last(b, 'state').me.possessed, { dropped: true });
+await core.onMessage(b, JSON.stringify({ type: 'player:move', x: 0.1, y: 0.1 }));
+await core.onMessage(a, JSON.stringify({ type: 'player:move', x: 0.2, y: 0.2 }));
+pb = [...inbox.get(host)!].reverse().find((m) => m.type === 'pos' && m.id === idb);
+assert.equal(pb.x, t.x, 'victim stays locked where dropped');
+assert.equal(last(host, 'pos').id, ida, 'possessor moves themselves again');
+// a can't possess twice; nobody can possess an already-locked b
+await core.onMessage(a, JSON.stringify({ type: 'player:power', power: 'possess', target: idc }));
+assert.match(last(a, 'error').message, /Already used/);
+// mirror: c turns on mirror and moves; host + others see the reflection, c sees the truth
+await core.onMessage(c, JSON.stringify({ type: 'player:power', power: 'mirror' }));
+await core.onMessage(c, JSON.stringify({ type: 'player:move', x: 0.2, y: 0.3 }));
+const pc = last(host, 'pos'); assert.equal(pc.id, idc); assert.equal(pc.x, 0.8); assert.equal(pc.y, 0.7);
+assert.equal(last(c, 'pos').x, 0.2);
+assert.equal(last(a, 'pos').x, 0.8);
+await core.finalize(code, 3);
+st = last(host, 'state');
+assert.equal(st.players.find((p: any) => p.id === idb).result.delta, 13, 'b was dropped on the answer by a, and settled first');
+assert.equal(st.players.find((p: any) => p.id === idc).x, 0.2, 'reveal shows true positions');
+console.log('✓ q4 xy possess/mirror/shield', Object.fromEntries(st.players.map((p: any) => [p.name, p.result.delta])));
 
 // Round 2 starts at q5: power-ups replenish, and Reveal + Double down may stack.
 const q5 = questions[4] as any;
@@ -134,14 +173,14 @@ assert.deepEqual(last(b, 'state').players.find((p: any) => p.id === idb).powers.
 
 
 st = last(host, 'state');
-assert.deepEqual(st.players.filter((p: any) => p.name !== 'Bo Oakes').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 67], ['Bob', 15], ['Cy Lee', 0]]);
+assert.deepEqual(st.players.filter((p: any) => p.name !== 'Bo Oakes').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 54], ['Bob', 28], ['Cy Lee', 0]]);
 
 // Reconnect keeps score
 inbox.delete(a);
 await core.onDisconnect(a);
 const a2 = open('a2');
 await core.onMessage(a2, JSON.stringify({ type: 'player:join', code, playerId: ida }));
-assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).score, 67);
+assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).score, 54);
 
 // Run to the end
 for (let i = 5; i < questions.length; i++) {

@@ -20,6 +20,7 @@ export default function Player() {
   const [name, setName] = useState(saved?.name || '');
   const [color, setColor] = useState(saved?.color || COLORS[Math.floor(Math.random() * COLORS.length)]);
   const [joining, setJoining] = useState(false);
+  const [arming, setArming] = useState(null); // power-up waiting for a target
 
   const onOpen = useCallback((send) => {
     const s = load();
@@ -49,8 +50,16 @@ export default function Player() {
     send({ type: 'player:join', code: c, name: name.trim(), color });
   };
   const leave = () => { localStorage.removeItem(KEY); setSaved(null); location.href = '/'; };
-  const onMove = useCallback((p) => send({ type: 'player:move', x: p.x, y: p.y }), [send]);
-  const usePower = useCallback((power) => { clearError(); send({ type: 'player:power', power }); }, [send, clearError]);
+  const onMove = useCallback((p, release = false) => send({ type: 'player:move', x: p.x, y: p.y, release }), [send]);
+  const usePower = useCallback((power, target) => {
+    clearError();
+    const def = POWERS.find((p) => p.id === power);
+    if (def?.targeted && !target) { setArming((a) => (a === power ? null : power)); return; }
+    setArming(null);
+    send({ type: 'player:power', power, target });
+  }, [send, clearError]);
+  const onTarget = useCallback((id) => { if (id && arming) usePower(arming, id); else setArming(null); }, [arming, usePower]);
+  const drop = useCallback(() => send({ type: 'player:drop' }), [send]);
 
   const inRoom = saved?.playerId && state && state.room.code === saved.code;
   const me = inRoom ? state.players.find((p) => p.id === saved.playerId) : null;
@@ -60,6 +69,7 @@ export default function Player() {
   useEffect(() => {
     if (phase !== 'question' || !me) return;
     const onKey = (e) => {
+      if (e.key === 'Escape') { setArming(null); return; }
       const pw = POWERS.find((p) => p.key === e.key);
       if (pw) { if (state?.me?.powers?.[pw.id] === 'available') usePower(pw.id); return; }
       const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
@@ -72,6 +82,7 @@ export default function Player() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [phase, me?.x, me?.y, onMove, usePower, state?.me?.powers]);
+  useEffect(() => setArming(null), [state?.room.qIndex]);
 
   if (!inRoom) {
     return (
@@ -142,8 +153,20 @@ export default function Player() {
           </div>
           <div className="stage-body">
             <div className="board-col">
-              <Board question={q} players={players} meId={saved.playerId} reveal={reveal} hint={state.me?.hint} interactive={room.phase === 'question'} onMove={onMove} />
-              {room.phase === 'question' && <PowerBar status={state.me?.powers} onUse={usePower} />}
+              {state.me?.possessed && (
+                <div className="banner bad">🕹️ {state.me.possessed.dropped ? "You've been possessed and locked here until the reveal." : "You're being possessed! Someone else is moving you."}</div>
+              )}
+              {state.me?.possessing && (
+                <div className="banner good">🕹️ You're controlling <b>{players.find((p) => p.id === state.me.possessing)?.name}</b>. Release to lock them in place. <button type="button" onClick={drop}>Drop here</button></div>
+              )}
+              <Board
+                question={q} players={players} meId={saved.playerId}
+                controlId={state.me?.possessing || saved.playerId}
+                reveal={reveal} hint={state.me?.hint}
+                interactive={room.phase === 'question' && !state.me?.possessed}
+                onMove={onMove} targeting={!!arming} onTarget={onTarget}
+              />
+              {room.phase === 'question' && <PowerBar status={state.me?.powers} onUse={usePower} arming={arming} />}
               {lastError && <p className="error">{lastError}</p>}
             </div>
             <aside className="side">

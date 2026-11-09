@@ -8,7 +8,17 @@ export interface Room {
   hostConn: string | null;
   hostToken: string;
   results: Results | null; // for the question being revealed
+  effects: Effect[];       // possessions on the current question
   createdAt: number;
+}
+
+// A possession: `from` controls `to`'s avatar until they drop them, after
+// which `to` is locked in place for the rest of the question.
+export interface Effect {
+  type: 'possess';
+  from: string;
+  to: string;
+  dropped: boolean;
 }
 
 export interface Player {

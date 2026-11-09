@@ -8,7 +8,9 @@ const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth l
 
 // The playing surface. Draws the question's geometry, every player's avatar,
 // and (when interactive) lets this player drag their own avatar around.
-export default function Board({ question: q, players, meId, reveal, hint = null, interactive = false, onMove, size = 'md' }) {
+// controlId: whose avatar my drags move (myself, or someone I'm possessing).
+// targeting: when set, clicking another avatar calls onTarget(id) instead of moving.
+export default function Board({ question: q, players, meId, controlId = meId, reveal, hint = null, interactive = false, onMove, targeting = false, onTarget, size = 'md' }) {
   const ref = useRef(null);
   const [drag, setDrag] = useState(null);   // optimistic own position while the pointer is down
   const [hover, setHover] = useState(null); // desktop: value under the cursor before clicking
@@ -17,21 +19,22 @@ export default function Board({ question: q, players, meId, reveal, hint = null,
   const pending = useRef(null);
 
   const me = players.find((p) => p.id === meId);
-  useEffect(() => { setDrag(null); setHover(null); }, [q?.id, reveal]);
-  // Once the server echoes our final position, drop the optimistic override.
-  useEffect(() => { if (!dragging.current) setDrag(null); }, [me?.x, me?.y]);
+  const ctl = players.find((p) => p.id === controlId) ?? me;
+  useEffect(() => { setDrag(null); setHover(null); }, [q?.id, reveal, controlId]);
+  // Once the server echoes the final position, drop the optimistic override.
+  useEffect(() => { if (!dragging.current) setDrag(null); }, [ctl?.x, ctl?.y]);
 
   const toBoard = useCallback((ev) => {
     const r = ref.current.getBoundingClientRect();
     return { x: clamp((ev.clientX - r.left) / r.width), y: clamp((ev.clientY - r.top) / r.height) };
   }, []);
 
-  const push = (p, force) => {
+  const push = (p, force, release = false) => {
     const t = performance.now();
     if (force || t - lastSent.current >= SEND_EVERY_MS) {
       lastSent.current = t;
       pending.current = null;
-      onMove?.(p);
+      onMove?.(p, release);
     } else {
       pending.current = p;
     }
@@ -39,6 +42,12 @@ export default function Board({ question: q, players, meId, reveal, hint = null,
 
   const onPointerDown = (ev) => {
     if (!interactive || ev.button > 0) return;
+    if (targeting) {
+      const hit = ev.target.closest?.('.avatar[data-id]');
+      if (hit && hit.dataset.id !== meId) onTarget?.(hit.dataset.id);
+      else onTarget?.(null); // clicked empty board: cancel
+      return;
+    }
     ev.currentTarget.setPointerCapture(ev.pointerId);
     dragging.current = true;
     const p = toBoard(ev);
@@ -57,7 +66,7 @@ export default function Board({ question: q, players, meId, reveal, hint = null,
     dragging.current = false;
     const p = toBoard(ev);
     setDrag(p);
-    push(p, true);
+    push(p, true, true); // release: if possessing someone, this drops them
   };
   const onPointerLeave = () => setHover(null);
 
@@ -70,22 +79,22 @@ export default function Board({ question: q, players, meId, reveal, hint = null,
   if (!q) return <div className={`board ${size} empty`} ref={ref} />;
 
   const shown = players
-    .map((p) => (p.id === meId && drag ? { ...p, x: drag.x, y: drag.y } : p))
+    .map((p) => (p.id === controlId && drag ? { ...p, x: drag.x, y: drag.y } : p))
     .filter((p) => p.x !== null && p.x !== undefined);
-  const myPos = me ? (drag ?? (me.x !== null ? { x: me.x, y: me.y } : null)) : null;
+  const myPos = ctl ? (drag ?? (ctl.x !== null ? { x: ctl.x, y: ctl.y } : null)) : null;
   // Live: only your own value (others' numbers would be noisy and easy to copy).
   // Reveal: everyone's value, next to their score badge.
   const labelFor = (p) => {
     if (!LABELLED.has(q.type)) return null;
     if (reveal) return describe(q, p);
-    if (p.id === meId && interactive && q.type !== 'range') return describe(q, p); // range shows the line marker instead
+    if (p.id === controlId && interactive && q.type !== 'range') return describe(q, p); // range shows the line marker instead
     return null;
   };
 
   return (
     <div
       ref={ref}
-      className={`board ${size} ${q.type} ${interactive ? 'interactive' : ''} ${reveal ? 'revealed' : ''}`}
+      className={`board ${size} ${q.type} ${interactive ? 'interactive' : ''} ${reveal ? 'revealed' : ''} ${targeting ? 'targeting' : ''}`}
       style={{ aspectRatio: `${BOARD_ASPECT}` }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -104,6 +113,8 @@ export default function Board({ question: q, players, meId, reveal, hint = null,
             key={p.id}
             player={p}
             me={p.id === meId}
+            steered={p.id === controlId && controlId !== meId}
+            dataId={p.id}
             size="sm"
             dim={!!reveal && p.result && !p.result.correct && p.result.delta <= 0}
             badge={reveal && p.result ? p.result.delta : null}
@@ -119,7 +130,11 @@ export default function Board({ question: q, players, meId, reveal, hint = null,
         <div className="hover-readout" style={{ left: `${hover.x * 100}%`, top: `${hover.y * 100}%` }}>{describe(q, hover)}</div>
       )}
       {interactive && !reveal && (
-        <div className="readout">{myPos ? describe(q, myPos, { double: (me?.powers || []).includes('double') }) : 'Click or drag anywhere to place yourself'}</div>
+        <div className="readout">
+          {targeting ? 'Click someone to possess them'
+            : myPos ? `${controlId !== meId ? `${ctl?.name}: ` : ''}${describe(q, myPos, { double: controlId === meId && (me?.powers || []).includes('double') })}`
+            : controlId !== meId ? `Drag to move ${ctl?.name}` : 'Click or drag anywhere to place yourself'}
+        </div>
       )}
     </div>
   );
