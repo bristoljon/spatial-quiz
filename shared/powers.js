@@ -9,14 +9,22 @@ export const POWERS = [
 ];
 export const POWER_IDS = POWERS.map((p) => p.id);
 
-// player.powers = { [id]: { round, q } } recording where each was last used.
-export function powerStatus(powers, id, round, qIndex) {
+// player.powers = { [id]: { q } } recording the question each was last used on.
+// `replenishedAt` is the question index of the last replenish; anything used
+// since then is spent.
+export function powerStatus(powers, id, qIndex, replenishedAt) {
   const used = powers?.[id];
   if (!used) return 'available';
   if (used.q === qIndex) return 'active';
-  if (used.round === round) return 'used';
+  if (used.q >= replenishedAt) return 'used';
   return 'available';
 }
+
+export const REPLENISH_LABEL = {
+  never: 'One of each for the whole quiz. Spend them wisely.',
+  round: 'One of each per round.',
+  random: 'One of each. Every so often, at random, everyone gets theirs back.',
+};
 
 export function activePowers(powers, qIndex) {
   return POWER_IDS.filter((id) => powers?.[id]?.q === qIndex);

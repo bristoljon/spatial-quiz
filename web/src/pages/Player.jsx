@@ -6,7 +6,7 @@ import Avatar from '../components/Avatar.jsx';
 import Leaderboard from '../components/Leaderboard.jsx';
 import PowerBar from '../components/PowerBar.jsx';
 import RoundHead from '../components/RoundHead.jsx';
-import { POWERS } from '../../../shared/powers.js';
+import { POWERS, REPLENISH_LABEL } from '../../../shared/powers.js';
 import { describeAnswer, signed } from '../format.js';
 import { COLORS, initialsOf } from '../../../shared/avatar.js';
 
@@ -133,7 +133,7 @@ export default function Player() {
           <p className="muted">On a keyboard, arrow keys nudge you (hold shift for bigger steps).</p>
           <div className="power-intro">
             {POWERS.map((p) => <div key={p.id}><span className="icon">{p.icon}</span><b>{p.name}</b> <span className="muted">{p.desc}</span></div>)}
-            <p className="muted">One of each per round.</p>
+            <p className="muted">{REPLENISH_LABEL[state.quiz.replenish] || REPLENISH_LABEL.round}</p>
           </div>
           {state.quiz.speedBonus > 0 && <p className="muted">🏁 The first player to settle on the right answer gets +{state.quiz.speedBonus}. Moving again resets your time.</p>}
           <div className="avatar-grid">
@@ -147,7 +147,7 @@ export default function Player() {
       {(room.phase === 'question' || room.phase === 'reveal') && q && (
         <section className="stage">
           <div className="question-head">
-            <RoundHead q={q} phase={room.phase} />
+            <RoundHead q={q} phase={room.phase} replenished={room.replenished} />
             <h2>{q.prompt}</h2>
             {room.phase === 'question' && <Timer endsAt={room.endsAt} timeLimit={q.timeLimit} now={now} />}
           </div>

@@ -82,7 +82,7 @@ export default function Host() {
       {(room.phase === 'question' || room.phase === 'reveal') && q && (
         <section className="stage">
           <div className="question-head">
-            <RoundHead q={q} phase={room.phase} />
+            <RoundHead q={q} phase={room.phase} replenished={room.replenished} />
             <h2>{q.prompt}</h2>
             {room.phase === 'question' && <Timer endsAt={room.endsAt} timeLimit={q.timeLimit} now={now} big />}
           </div>

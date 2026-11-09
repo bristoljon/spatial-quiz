@@ -32,7 +32,13 @@ flat bonus, `settings.speedBonus` in [shared/quiz.js](shared/quiz.js), default
 
 ### Power-ups
 
-Each player gets one of each per round (they replenish when a new round starts):
+Each player gets one of each. When used ones come back is a quiz setting,
+`settings.powerUps` in [shared/quiz.js](shared/quiz.js):
+
+- `replenish: 'never'` — one of each for the whole quiz
+- `replenish: 'round'` — refreshed at the start of every round (default)
+- `replenish: 'random'` — at the start of each question there's a `randomChance`
+  (default 0.3) that everyone's are refreshed; the screen announces it
 
 | Power-up        | Effect                                                                 |
 |-----------------|------------------------------------------------------------------------|
@@ -42,6 +48,9 @@ Each player gets one of each per round (they replenish when a new round starts):
 | 🕹️ Possess      | Pick a victim. Your own avatar freezes while you drag theirs; where you drop them, they're locked until the reveal. |
 | 🪞 Mirror       | Everyone else sees your avatar reflected through the board's centre. On a range that flips your number; on a wager it flips your side. |
 | 🛡️ Shield       | You can't be possessed this question. A Possess aimed at you is wasted. |
+
+While you're steering someone you see their true position even if they're
+invisible or mirrored; everyone else keeps seeing nothing, or the reflection.
 
 They stack. Keys **1–6** on a keyboard; Possess then waits for you to click a victim (Esc cancels). Power-ups are private: the
 server only tells you about your own, so nobody else (including the big

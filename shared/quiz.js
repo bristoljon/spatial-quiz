@@ -5,7 +5,7 @@
 // avatar sits when the clock hits zero is your answer.
 //
 // Questions are grouped into rounds. Each player gets one of each power-up
-// (see powers.js) per round.
+// (see powers.js); settings.powerUps decides when used ones come back.
 //
 //   choice  options -> zones on a grid. Stand in the right one.
 //           { options: [{id,text}], answer: id }
@@ -24,6 +24,12 @@ export const quiz = {
     // Extra points for the correct player who settled on their answer first
     // (by the time of their last move). 0 disables it.
     speedBonus: 1,
+    // When used power-ups come back:
+    //   'never'  - one of each for the whole quiz
+    //   'round'  - one of each per round
+    //   'random' - at the start of each question there's a `randomChance`
+    //              that everyone's power-ups are refreshed (announced on screen)
+    powerUps: { replenish: 'round', randomChance: 0.3 },
   },
   rounds: [
     {

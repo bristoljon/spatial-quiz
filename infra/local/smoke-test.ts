@@ -182,8 +182,30 @@ const a2 = open('a2');
 await core.onMessage(a2, JSON.stringify({ type: 'player:join', code, playerId: ida }));
 assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).score, 54);
 
+// q6: possessing someone who then goes invisible. Only the possessor (and the
+// victim) see where they are; the host and others see nothing.
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+assert.equal(last(host, 'state').room.qIndex, 5);
+await core.onMessage(b, JSON.stringify({ type: 'player:move', x: 0.3, y: 0.3 }));
+await core.onMessage(a2, JSON.stringify({ type: 'player:power', power: 'possess', target: idb }));
+await core.onMessage(b, JSON.stringify({ type: 'player:power', power: 'invisible' }));
+assert.equal(last(host, 'state').players.find((p: any) => p.id === idb).hidden, true, 'host loses b');
+assert.equal(last(c, 'state').players.find((p: any) => p.id === idb).hidden, true, 'others lose b');
+assert.equal(last(a2, 'state').players.find((p: any) => p.id === idb).hidden, false, 'possessor still sees b');
+assert.equal(last(a2, 'state').players.find((p: any) => p.id === idb).x, 0.3);
+inbox.get(host)!.length = 0; inbox.get(c)!.length = 0; inbox.get(a2)!.length = 0;
+await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: 0.6, y: 0.6 }));
+assert.equal(last(a2, 'pos')?.x, 0.6, 'possessor gets live positions of the invisible victim');
+assert.ok(!inbox.get(host)!.some((m) => m.type === 'pos'), 'host gets none');
+assert.ok(!inbox.get(c)!.some((m) => m.type === 'pos'), 'others get none');
+// mirrored victim: possessor sees the truth, others the reflection
+await core.onMessage(b, JSON.stringify({ type: 'player:power', power: 'mirror' }));
+await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: 0.6, y: 0.6, release: true })); // drop: a no longer privileged
+await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
+console.log('✓ q6 possess an invisible player');
+
 // Run to the end
-for (let i = 5; i < questions.length; i++) {
+for (let i = 6; i < questions.length; i++) {
   await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
   await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
 }
@@ -196,5 +218,33 @@ await core.onMessage(host2, JSON.stringify({ type: 'host:join', code, token }));
 assert.equal(last(host2, 'host:ok').code, code);
 await core.onMessage(open('bad'), JSON.stringify({ type: 'host:join', code, token: 'nope' }));
 assert.equal(last('bad', 'error').fatal, true);
+
+
+// --- Replenish modes ------------------------------------------------------
+async function playTwoRoundsWith(mode: 'never' | 'random', random?: () => number) {
+  const c2 = new Core(new MemStore(), transport, { replenish: mode, randomChance: 0.5, random });
+  const h = open('h-' + mode); await c2.onMessage(h, JSON.stringify({ type: 'host:create' }));
+  const code2 = last(h, 'host:ok').code;
+  const p = open('p-' + mode); await c2.onMessage(p, JSON.stringify({ type: 'player:join', code: code2, name: 'Pat Q' }));
+  const statuses: string[] = []; const flags: boolean[] = [];
+  for (let i = 0; i < questions.length; i++) {
+    await c2.onMessage(h, JSON.stringify({ type: 'host:next' }));
+    const s = last(p, 'state');
+    flags.push(s.room.replenished);
+    statuses.push(s.me.powers.shield);
+    if (i === 0) await c2.onMessage(p, JSON.stringify({ type: 'player:power', power: 'shield' }));
+    await c2.onMessage(h, JSON.stringify({ type: 'host:end' }));
+  }
+  return { statuses, flags };
+}
+let r = await playTwoRoundsWith('never');
+assert.deepEqual(r.statuses, ['available', 'used', 'used', 'used', 'used', 'used', 'used', 'used'], 'never: spent for the whole quiz');
+assert.deepEqual(r.flags, [true, false, false, false, false, false, false, false]);
+// random: scripted dice -> replenish only on q3 and q6 (0-based 2 and 5)
+const dice = [0.9, 0.1, 0.9, 0.9, 0.1, 0.9, 0.9]; let di = 0;
+r = await playTwoRoundsWith('random', () => dice[di++]);
+assert.deepEqual(r.flags, [true, false, true, false, false, true, false, false]);
+assert.deepEqual(r.statuses, ['available', 'used', 'available', 'available', 'available', 'available', 'available', 'available']);
+console.log('✓ replenish modes never/random');
 
 console.log('\nAll good.');

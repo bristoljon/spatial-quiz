@@ -9,6 +9,7 @@ export interface Room {
   hostToken: string;
   results: Results | null; // for the question being revealed
   effects: Effect[];       // possessions on the current question
+  replenishedAt: number;   // question index power-ups were last refreshed at
   createdAt: number;
 }
 
@@ -33,7 +34,7 @@ export interface Player {
   y: number | null;
   placedQ: number | null;  // which question the position belongs to
   placedAt: number | null; // server time of the last move
-  powers: Record<string, { round: number; q: number }>; // last use of each power-up
+  powers: Record<string, { q: number }>; // question each power-up was last used on
 }
 
 export interface Conn {

@@ -16,12 +16,21 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 type Msg = { type: string; [k: string]: unknown };
 type Target = { conn: string; playerId?: string };
 
+type Replenish = 'never' | 'round' | 'random';
+
 export class Core {
+  private replenish: Replenish;
+  private randomChance: number;
   constructor(
     private store: Store,
     private transport: Transport,
-    private opts: { hostPin?: string } = {},
-  ) {}
+    private opts: { hostPin?: string; replenish?: Replenish; randomChance?: number; random?: () => number } = {},
+  ) {
+    const cfg = (quiz.settings as any)?.powerUps ?? {};
+    this.replenish = opts.replenish ?? cfg.replenish ?? 'round';
+    this.randomChance = opts.randomChance ?? cfg.randomChance ?? 0.3;
+    buildReplenish = this.replenish;
+  }
 
   // ---------------------------------------------------------------- inbound
 
@@ -82,7 +91,7 @@ export class Core {
     }
     const room: Room = {
       code, phase: 'lobby', qIndex: -1, endsAt: null,
-      hostConn: connId, hostToken: randomUUID(), results: null, effects: [], createdAt: Date.now(),
+      hostConn: connId, hostToken: randomUUID(), results: null, effects: [], replenishedAt: 0, createdAt: Date.now(),
     };
     await this.store.putRoom(room);
     await this.store.putConn({ id: connId, room: code, role: 'host' });
@@ -125,9 +134,20 @@ export class Core {
     const players = await this.store.listPlayers(room.code);
     await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { x: null, y: null, placedQ: null, placedAt: null })));
     const patch: Partial<Room> = { phase: 'question', qIndex: next, endsAt, results: null, effects: [] };
+    if (this.shouldReplenish(next)) patch.replenishedAt = next;
     await this.store.updateRoom(room.code, patch);
     await this.transport.scheduleFinalize(room.code, next, endsAt + GRACE_MS);
     await this.broadcastState({ ...room, ...patch });
+  }
+
+  // Do used power-ups come back on this question?
+  private shouldReplenish(qIndex: number) {
+    if (qIndex === 0) return true;
+    switch (this.replenish) {
+      case 'never': return false;
+      case 'round': return questions[qIndex].round !== questions[qIndex - 1].round;
+      case 'random': return (this.opts.random ?? Math.random)() < this.randomChance;
+    }
   }
 
   private async hostEnd(connId: string) {
@@ -141,7 +161,7 @@ export class Core {
     if (!room) return;
     const players = await this.store.listPlayers(room.code);
     await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { score: 0, x: null, y: null, placedQ: null, placedAt: null, powers: {} })));
-    const patch: Partial<Room> = { phase: 'lobby', qIndex: -1, endsAt: null, results: null, effects: [] };
+    const patch: Partial<Room> = { phase: 'lobby', qIndex: -1, endsAt: null, results: null, effects: [], replenishedAt: 0 };
     await this.store.updateRoom(room.code, patch);
     await this.broadcastState({ ...room, ...patch });
   }
@@ -213,12 +233,13 @@ export class Core {
     await this.broadcastState({ ...room, effects });
   }
 
-  // A position as each viewer should see it: you always see yourself truly;
-  // invisible players are withheld from others; mirrored ones are reflected.
+  // A position as each viewer should see it: you (and whoever is possessing
+  // you) see the truth; invisible players are withheld from everyone else;
+  // mirrored ones are reflected.
   private async broadcastPos(room: Room, subject: Player) {
     const pos = { x: subject.x!, y: subject.y! };
     await this.broadcast(room, (t) => {
-      if (t.playerId === subject.id) return { type: 'pos', id: subject.id, ...pos };
+      if (seesTruth(t.playerId ?? null, subject.id, room)) return { type: 'pos', id: subject.id, ...pos };
       if (isActive(subject.powers, 'invisible', room.qIndex)) return null;
       const seen = isActive(subject.powers, 'mirror', room.qIndex) ? mirrored(pos) : pos;
       return { type: 'pos', id: subject.id, ...seen };
@@ -237,7 +258,7 @@ export class Core {
     const player = await this.store.getPlayer(room.code, conn.playerId);
     if (!player) return;
     const q = questions[room.qIndex];
-    const status = powerStatus(player.powers, id, q.round, room.qIndex);
+    const status = powerStatus(player.powers, id, room.qIndex, room.replenishedAt ?? 0);
     if (status === 'active') return; // already on
     if (status === 'used') return this.transport.send(connId, { type: 'error', message: 'Already used this round' });
 
@@ -249,14 +270,14 @@ export class Core {
       if (effects.some((e) => e.to === target.id)) return this.transport.send(connId, { type: 'error', message: `${target.name} is already possessed` });
       if (isActive(target.powers, 'shield', room.qIndex)) {
         // Blocked. The attempt still costs you the power-up.
-        await this.store.updatePlayer(room.code, player.id, { powers: { ...player.powers, possess: { round: q.round, q: room.qIndex } } });
+        await this.store.updatePlayer(room.code, player.id, { powers: { ...player.powers, possess: { q: room.qIndex } } });
         await this.transport.send(connId, { type: 'error', message: `🛡️ ${target.name} is shielded. Possess wasted.` });
         return this.broadcastState(room);
       }
       effects = [...effects, { type: 'possess', from: player.id, to: target.id, dropped: false }];
       await this.store.updateRoom(room.code, { effects });
     }
-    const powers = { ...player.powers, [id]: { round: q.round, q: room.qIndex } };
+    const powers = { ...player.powers, [id]: { q: room.qIndex } };
     await this.store.updatePlayer(room.code, player.id, { powers });
     await this.broadcastState({ ...room, effects });
   }
@@ -335,7 +356,15 @@ export class Core {
   }
 }
 
+let buildReplenish: Replenish = (quiz.settings as any)?.powerUps?.replenish ?? 'round';
 const pick = (e?: Effect) => (e ? { dropped: e.dropped } : null);
+
+// You see your own true position, and so does anyone currently steering you.
+function seesTruth(viewerId: string | null, subjectId: string, room: Room) {
+  if (!viewerId) return false;
+  if (viewerId === subjectId) return true;
+  return (room.effects ?? []).some((e) => e.to === subjectId && e.from === viewerId && !e.dropped);
+}
 
 export function buildState(room: Room, players: Player[], viewerId: string | null) {
   const total = questions.length;
@@ -346,13 +375,13 @@ export function buildState(room: Room, players: Player[], viewerId: string | nul
   return {
     type: 'state',
     serverNow: Date.now(),
-    quiz: { title: quiz.title, subtitle: quiz.subtitle, total, speedBonus: quiz.settings?.speedBonus ?? 0, rounds: quiz.rounds.map((r) => ({ title: r.title, count: r.questions.length })) },
-    room: { code: room.code, phase: room.phase, qIndex: room.qIndex, endsAt: room.endsAt, hostOnline: !!room.hostConn },
+    quiz: { title: quiz.title, subtitle: quiz.subtitle, total, speedBonus: quiz.settings?.speedBonus ?? 0, replenish: buildReplenish, rounds: quiz.rounds.map((r) => ({ title: r.title, count: r.questions.length })) },
+    room: { code: room.code, phase: room.phase, qIndex: room.qIndex, endsAt: room.endsAt, hostOnline: !!room.hostConn, replenished: room.phase === 'question' && (room.replenishedAt ?? 0) === room.qIndex },
     question: q && room.phase !== 'final' ? publicQuestion(q, room.qIndex, total) : null,
     reveal: results?.reveal ?? null,
     me: me && q && room.phase !== 'final'
       ? {
-          powers: Object.fromEntries(POWER_IDS.map((id) => [id, powerStatus(me.powers, id, q.round, room.qIndex)])),
+          powers: Object.fromEntries(POWER_IDS.map((id) => [id, powerStatus(me.powers, id, room.qIndex, room.replenishedAt ?? 0)])),
           hint: showLive && isActive(me.powers, 'reveal', room.qIndex) ? hintFor(q) : null,
           // Who you're steering, and whether someone has you.
           possessing: showLive ? (room.effects ?? []).find((e) => e.from === me.id && !e.dropped)?.to ?? null : null,
@@ -362,8 +391,9 @@ export function buildState(room: Room, players: Player[], viewerId: string | nul
     players: players
       .map((p) => {
         const live = showLive && p.placedQ === room.qIndex;
-        const hidden = showLive && p.id !== viewerId && isActive(p.powers, 'invisible', room.qIndex);
-        const flip = showLive && p.id !== viewerId && isActive(p.powers, 'mirror', room.qIndex);
+        const truth = seesTruth(viewerId, p.id, room);
+        const hidden = showLive && !truth && isActive(p.powers, 'invisible', room.qIndex);
+        const flip = showLive && !truth && isActive(p.powers, 'mirror', room.qIndex);
         const r = results?.perPlayer[p.id] ?? null;
         const powers = showLive ? activePowers(p.powers, room.qIndex) : r?.powers ?? [];
         const livePos = live && p.x !== null ? (flip ? mirrored({ x: p.x, y: p.y! }) : { x: p.x, y: p.y! }) : null;
