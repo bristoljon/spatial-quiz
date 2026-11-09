@@ -10,7 +10,8 @@
     "dev": "tsx watch local/dev-server.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx local/smoke-test.ts",
-    "start": "tsx local/dev-server.ts"
+    "start": "tsx local/dev-server.ts",
+    "bots": "tsx local/bots.ts"
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.700.0",

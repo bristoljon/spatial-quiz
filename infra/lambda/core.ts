@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { quiz, questions } from '../../shared/quiz.js';
 import { scorePosition, revealFor, publicQuestion, hintFor } from '../../shared/scoring.js';
 import { clamp01 } from '../../shared/spatial.js';
-import { normaliseTag, assignColor } from '../../shared/avatar.js';
+import { initialsOf, assignColor } from '../../shared/avatar.js';
 import { POWER_IDS, powerStatus, activePowers, isActive } from '../../shared/powers.js';
 import type { Store, Transport, Room, Player, Results, PlayerResult } from './types.js';
 
@@ -162,7 +162,7 @@ export class Core {
       player.conn = connId;
     } else {
       if (!name) return this.transport.send(connId, { type: 'error', message: 'Pick a name' });
-      const tag = normaliseTag(msg.tag, name);
+      const tag = initialsOf(name);
       const others = await this.store.listPlayers(code);
       const color = assignColor(String(msg.color || ''), tag, others);
       player = {

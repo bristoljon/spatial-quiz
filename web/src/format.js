@@ -1,7 +1,7 @@
 import { zonesFor, zoneAt, rangeValue, xyValue, wagerValue } from '../../shared/spatial.js';
 
 // What a position "means" for a question, as a short label.
-export function describe(q, p) {
+export function describe(q, p, { double = false } = {}) {
   if (!q || !p || p.x === null || p.x === undefined) return null;
   switch (q.type) {
     case 'choice': {
@@ -10,7 +10,7 @@ export function describe(q, p) {
     }
     case 'range': return fmt(rangeValue(q, p), q.unit);
     case 'xy': { const v = xyValue(q, p); return `${fmt(v.x)} · ${fmt(v.y)}`; }
-    case 'wager': { const { side, stake } = wagerValue(p); return `${q[side].text} · ${Math.round(stake * 100)}%`; }
+    case 'wager': { const { side, stake } = wagerValue(p); const pts = Math.round(q.points * stake); return `${q[side].text} · ${pts === 0 ? 'nothing at stake' : `win ${double ? pts * 2 : pts} or lose ${pts}`}`; }
     default: return null;
   }
 }

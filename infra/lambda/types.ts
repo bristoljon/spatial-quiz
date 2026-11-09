@@ -15,7 +15,7 @@ export interface Player {
   room: string;
   id: string;
   name: string;
-  tag: string;     // 1–2 graphemes shown on the disc
+  tag: string;     // initials shown on the disc (1–3 characters)
   color: string;   // hex from shared/avatar.js COLORS
   score: number;
   conn: string | null;

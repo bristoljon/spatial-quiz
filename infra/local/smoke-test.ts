@@ -6,6 +6,7 @@ import { MemStore } from './mem-store.js';
 import type { Transport } from '../lambda/types.js';
 import { questions } from '../../shared/quiz.js';
 import { zonesFor, rangeX, xyPosition } from '../../shared/spatial.js';
+import { initialsOf } from '../../shared/avatar.js';
 
 const inbox = new Map<string, any[]>();
 const timers: { code: string; q: number; fireAt: number }[] = [];
@@ -23,18 +24,21 @@ const { code, token } = last(host, 'host:ok');
 assert.equal(code.length, 4);
 
 const a = open('a'), b = open('b'), c = open('c');
-await core.onMessage(a, JSON.stringify({ type: 'player:join', code, name: 'Ada Lovelace', tag: '🦊', color: '#ff7a59' }));
-await core.onMessage(b, JSON.stringify({ type: 'player:join', code, name: 'Bob', tag: 'Bobby', color: '#ff7a59' }));
-await core.onMessage(c, JSON.stringify({ type: 'player:join', code: code.toLowerCase(), name: 'Cy Lee', tag: '  ', color: '#ff7a59' }));
+await core.onMessage(a, JSON.stringify({ type: 'player:join', code, name: 'Ada Lovelace', color: '#ff7a59' }));
+await core.onMessage(b, JSON.stringify({ type: 'player:join', code, name: 'Bob', color: '#ff7a59' }));
+await core.onMessage(c, JSON.stringify({ type: 'player:join', code: code.toLowerCase(), name: 'Cy Lee', color: '#ff7a59' }));
 const ida = last(a, 'player:ok').playerId, idb = last(b, 'player:ok').playerId, idc = last(c, 'player:ok').playerId;
 let st = last(host, 'state');
 assert.equal(st.players.length, 3);
-assert.equal(st.players.find((p: any) => p.id === ida).tag, '🦊');
-assert.equal(st.players.find((p: any) => p.id === idb).tag, 'Bo', 'tag trimmed to 2 graphemes');
-assert.equal(st.players.find((p: any) => p.id === idc).tag, 'CL', 'blank tag falls back to initials');
+assert.equal(st.players.find((p: any) => p.id === ida).tag, 'AL');
+assert.equal(st.players.find((p: any) => p.id === idb).tag, 'BO', 'single word -> first two letters');
+assert.equal(st.players.find((p: any) => p.id === idc).tag, 'CL');
+assert.equal(initialsOf('Jean Paul Sartre'), 'JPS');
+assert.equal(initialsOf('Mary Anne de Winter'), 'MAW');
+assert.equal(initialsOf('Jean-Luc Picard'), 'JLP');
 // Same tag + same colour would clash; different tags may share a colour.
 const d = open('d');
-await core.onMessage(d, JSON.stringify({ type: 'player:join', code, name: 'Dee', tag: 'Bo', color: '#ff7a59' }));
+await core.onMessage(d, JSON.stringify({ type: 'player:join', code, name: 'Bo Oakes', color: '#ff7a59' })); // also 'BO'
 const idd = last(d, 'player:ok').playerId;
 st = last(host, 'state');
 assert.equal(st.players.find((p: any) => p.id === ida).color, '#ff7a59');
@@ -130,7 +134,7 @@ assert.deepEqual(last(b, 'state').players.find((p: any) => p.id === idb).powers.
 
 
 st = last(host, 'state');
-assert.deepEqual(st.players.filter((p: any) => p.name !== 'Dee').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 67], ['Bob', 15], ['Cy Lee', 0]]);
+assert.deepEqual(st.players.filter((p: any) => p.name !== 'Bo Oakes').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 67], ['Bob', 15], ['Cy Lee', 0]]);
 
 // Reconnect keeps score
 inbox.delete(a);

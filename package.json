@@ -16,7 +16,8 @@
     "deploy": "npm run build && npm run deploy -w infra",
     "destroy": "npm run destroy -w infra",
     "typecheck": "npm run typecheck -w infra",
-    "test": "npm test -w infra"
+    "test": "npm test -w infra",
+    "bots": "npm run bots -w infra --"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

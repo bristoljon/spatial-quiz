@@ -8,10 +8,9 @@ import PowerBar from '../components/PowerBar.jsx';
 import RoundHead from '../components/RoundHead.jsx';
 import { POWERS } from '../../../shared/powers.js';
 import { describeAnswer, signed } from '../format.js';
-import { COLORS, normaliseTag, initialsOf, graphemes } from '../../../shared/avatar.js';
+import { COLORS, initialsOf } from '../../../shared/avatar.js';
 
 const KEY = 'sq:player';
-const QUICK = ['🦊', '🐸', '🐙', '🦄', '🐝', '🦖', '🐧', '🦉', '🍕', '🚀', '⚡', '🔥'];
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; } };
 
 export default function Player() {
@@ -19,14 +18,12 @@ export default function Player() {
   const params = new URLSearchParams(location.search);
   const [code, setCode] = useState((params.get('c') || saved?.code || '').toUpperCase());
   const [name, setName] = useState(saved?.name || '');
-  const [tag, setTag] = useState(saved?.tag || '');
-  const [tagEdited, setTagEdited] = useState(!!saved?.tag);
   const [color, setColor] = useState(saved?.color || COLORS[Math.floor(Math.random() * COLORS.length)]);
   const [joining, setJoining] = useState(false);
 
   const onOpen = useCallback((send) => {
     const s = load();
-    if (s?.playerId) send({ type: 'player:join', code: s.code, playerId: s.playerId, name: s.name, tag: s.tag, color: s.color });
+    if (s?.playerId) send({ type: 'player:join', code: s.code, playerId: s.playerId, name: s.name, color: s.color });
   }, []);
   const onMessage = useCallback((msg) => {
     if (msg.type === 'player:ok') {
@@ -42,14 +39,14 @@ export default function Player() {
 
   const { status, state, send, now, lastError, clearError } = useRoom({ onOpen, onMessage });
 
-  const effectiveTag = normaliseTag(tagEdited ? tag : initialsOf(name), name);
+  const initials = initialsOf(name);
   const join = (e) => {
     e.preventDefault();
     clearError();
     const c = code.trim().toUpperCase();
-    localStorage.setItem(KEY, JSON.stringify({ code: c, name: name.trim(), tag: effectiveTag, color }));
+    localStorage.setItem(KEY, JSON.stringify({ code: c, name: name.trim(), color }));
     setJoining(true);
-    send({ type: 'player:join', code: c, name: name.trim(), tag: effectiveTag, color });
+    send({ type: 'player:join', code: c, name: name.trim(), color });
   };
   const leave = () => { localStorage.removeItem(KEY); setSaved(null); location.href = '/'; };
   const onMove = useCallback((p) => send({ type: 'player:move', x: p.x, y: p.y }), [send]);
@@ -88,19 +85,9 @@ export default function Player() {
             <input value={name} onChange={(e) => setName(e.target.value)} maxLength={20} placeholder="e.g. Sam" required />
           </label>
           <div className="avatar-picker">
-            <Avatar player={{ tag: effectiveTag, color }} size="lg" />
+            <Avatar player={{ tag: initials, color }} size="lg" />
             <div className="avatar-fields">
-              <label>Avatar <span className="muted">(up to 2 characters, emoji count as one)</span>
-                <input
-                  value={tagEdited ? tag : effectiveTag}
-                  onChange={(e) => { setTagEdited(true); setTag(graphemes(e.target.value).filter((c) => !/\s/.test(c)).slice(0, 2).join('')); }}
-                  placeholder="AB"
-                  autoComplete="off"
-                />
-              </label>
-              <div className="quick">
-                {QUICK.map((e) => <button type="button" key={e} onClick={() => { setTagEdited(true); setTag(e); }}>{e}</button>)}
-              </div>
+              <span className="muted">Your initials, in a colour of your choice</span>
               <div className="swatches">
                 {COLORS.map((c) => <button type="button" key={c} className={c === color ? 'on' : ''} style={{ background: c }} onClick={() => setColor(c)} aria-label={c} />)}
               </div>

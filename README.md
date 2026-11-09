@@ -5,9 +5,9 @@ board, on the big screen and on every player's screen, in real time. Drag
 yourself to where you think the answer is. When the clock hits zero, wherever
 you're standing is your answer.
 
-Players pick a 1–2 character tag (letters, digits or an emoji) and a colour.
-The server recolours anyone whose tag and colour clash with an existing player,
-so two "AL"s are always telling apart. Works equally on a laptop (click, drag,
+Players enter their name and pick a colour; their avatar is their initials
+(up to three). The server recolours anyone whose initials and colour clash with
+an existing player, so two "AL"s are always telling apart. Works equally on a laptop (click, drag,
 or nudge with the arrow keys; hover shows the value under the cursor) and on a
 phone (touch and drag).
 
@@ -75,6 +75,23 @@ npm run dev          # websocket server on :8787 + Vite on :5173 (proxies /ws)
 
 Use <http://localhost:5173>. `ngrok http 5173` also works if you want hot
 reload *and* phones.
+
+### Simulated players
+
+To try things out without a room full of phones, point some bots at your room:
+
+```bash
+npm run bots -- --code ABCD            # 4 bots, local server
+npm run bots -- --code ABCD --n 8      # more chaos
+npm run bots -- --code ABCD --url wss://xyz.ngrok.app/ws   # through ngrok / against AWS
+```
+
+They join over the real WebSocket like any phone. Each bot gets a random
+personality: accuracy (they know the answers and miss by an amount that
+depends on it), how early it settles, how much it fidgets first, how often it
+fires a power-up, and the last bot is always a copycat that follows someone
+else's avatar, which is handy for testing Invisibility. The terminal prints
+what each bot did and scored.
 
 ### Tests
 

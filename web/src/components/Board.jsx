@@ -104,7 +104,7 @@ export default function Board({ question: q, players, meId, reveal, hint = null,
             key={p.id}
             player={p}
             me={p.id === meId}
-            size={size === 'lg' ? 'md' : 'sm'}
+            size="sm"
             dim={!!reveal && p.result && !p.result.correct && p.result.delta <= 0}
             badge={reveal && p.result ? p.result.delta : null}
             label={labelFor(p)}
@@ -119,7 +119,7 @@ export default function Board({ question: q, players, meId, reveal, hint = null,
         <div className="hover-readout" style={{ left: `${hover.x * 100}%`, top: `${hover.y * 100}%` }}>{describe(q, hover)}</div>
       )}
       {interactive && !reveal && (
-        <div className="readout">{myPos ? describe(q, myPos) : 'Click or drag anywhere to place yourself'}</div>
+        <div className="readout">{myPos ? describe(q, myPos, { double: (me?.powers || []).includes('double') }) : 'Click or drag anywhere to place yourself'}</div>
       )}
     </div>
   );
@@ -248,10 +248,10 @@ function WagerLayer({ q, reveal, hint }) {
       {side('left')}
       {side('right')}
       <div className="centre-line" />
-      <div className="stake-label l" style={{ left: pct(0.5 - WAGER_FULL_AT) }}>100%</div>
-      <div className="stake-label c">0%</div>
-      <div className="stake-label r" style={{ left: pct(0.5 + WAGER_FULL_AT) }}>100%</div>
-      <div className="hint">Further from the middle = bigger stake</div>
+      <div className="stake-label l" style={{ left: pct(0.5 - WAGER_FULL_AT) }}>±{q.points}</div>
+      <div className="stake-label c">0</div>
+      <div className="stake-label r" style={{ left: pct(0.5 + WAGER_FULL_AT) }}>±{q.points}</div>
+      <div className="hint">Further from the middle = more points staked</div>
     </div>
   );
 }
