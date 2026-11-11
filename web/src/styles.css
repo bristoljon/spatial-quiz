@@ -170,6 +170,12 @@ input.code-input { text-transform: uppercase; letter-spacing: 0.3em; font-weight
 .target span { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); white-space: nowrap; color: var(--good); font-weight: 800; font-size: clamp(0.85rem, 2vw, 1.3rem); }
 
 /* wager */
+/* image: the picture sits in a fixed rectangle so positions mean the same everywhere */
+.image-layer img { position: absolute; display: block; object-fit: fill; pointer-events: none; user-select: none; -webkit-user-drag: none; }
+.board.image { background: #0b0c16; }
+.board.image .target span { text-shadow: 0 1px 6px rgba(0,0,0,0.9); }
+.board.image .readout, .board.image .hover-readout { background: rgba(15,16,32,0.92); }
+
 .wager-layer .half { position: absolute; top: 0; bottom: 0; width: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: clamp(1.4rem, 5vw, 3.5rem); transition: background 300ms, opacity 300ms; }
 .wager-layer .half.left { left: 0; background: linear-gradient(90deg, rgba(90,209,255,0.35), rgba(90,209,255,0.02)); }
 .wager-layer .half.right { right: 0; background: linear-gradient(270deg, rgba(255,122,89,0.35), rgba(255,122,89,0.02)); }

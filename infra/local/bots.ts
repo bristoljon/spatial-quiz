@@ -9,7 +9,7 @@
 //   npm run bots -- --code ABCD --url wss://<api-id>.execute-api.eu-west-2.amazonaws.com/prod
 import WebSocket from 'ws';
 import { questions } from '../../shared/quiz.js';
-import { zonesFor, rangeX, xyPosition, WAGER_FULL_AT, clamp01 } from '../../shared/spatial.js';
+import { zonesFor, rangeX, xyPosition, imagePosition, imageRect, WAGER_FULL_AT, clamp01 } from '../../shared/spatial.js';
 import { COLORS, initialsOf } from '../../shared/avatar.js';
 import { POWER_IDS } from '../../shared/powers.js';
 
@@ -124,6 +124,11 @@ class Bot {
         const { x: ax, y: ay } = q.axes;
         const v = { x: q.answer.x + gauss() * err * (ax.max - ax.min) * 0.5, y: q.answer.y + gauss() * err * (ay.max - ay.min) * 0.5 };
         return xyPosition(q, v);
+      }
+      case 'image': {
+        const t = imagePosition(q, q.answer);
+        const r = imageRect(q);
+        return { x: clamp01(t.x + gauss() * err * r.w * 0.5), y: clamp01(t.y + gauss() * err * r.h * 0.5) };
       }
       case 'wager': {
         const side = Math.random() < this.p.accuracy ? q.answer : q.answer === 'left' ? 'right' : 'left';

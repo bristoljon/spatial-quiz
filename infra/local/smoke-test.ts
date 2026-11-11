@@ -5,7 +5,7 @@ import { Core, GRACE_MS } from '../lambda/core.js';
 import { MemStore } from './mem-store.js';
 import type { Transport } from '../lambda/types.js';
 import { questions } from '../../shared/quiz.js';
-import { zonesFor, rangeX, xyPosition } from '../../shared/spatial.js';
+import { zonesFor, rangeX, xyPosition, imagePosition, imageRect, imageValue } from '../../shared/spatial.js';
 import { initialsOf } from '../../shared/avatar.js';
 
 const inbox = new Map<string, any[]>();
@@ -231,8 +231,37 @@ assert.equal(P(ida).x, 0.5, 'bumper stays put');
 await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
 console.log('✓ q7 bump');
 
+// q8 image: the answer is a point on a picture. a on it, b 6% of the board
+// width to the left (within zeroAt=0.2 -> partial), c in the letterbox bar.
+const q8 = questions[7] as any;
+assert.equal(q8.type, 'image');
+const t8 = imagePosition(q8, q8.answer);
+const r8 = imageRect(q8);
+assert.equal(r8.w, 1); assert.ok(r8.y > 0.09 && r8.y < 0.11, '2:1 picture on a 16:10 board leaves 10% bars top and bottom');
+inbox.get(host)!.length = 0;
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+assert.equal(last(host, 'state').room.qIndex, 7);
+assert.equal(last(host, 'state').question.answer, undefined, 'players never see the point');
+assert.equal(last(host, 'state').question.image.src, q8.image.src);
+await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: t8.x, y: t8.y }));
+await core.onMessage(b, JSON.stringify({ type: 'player:move', x: t8.x - 0.06, y: t8.y }));
+await core.onMessage(c, JSON.stringify({ type: 'player:move', x: 0.5, y: 0.02 }));
+await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
+st = last(host, 'state');
+const R8 = (id: string) => st.players.find((p: any) => p.id === id).result;
+assert.equal(R8(ida).delta, 13, 'on the point: full points plus speed bonus');
+assert.equal(R8(ida).correct, true);
+assert.ok(Math.abs(R8(ida).value.lat - q8.answer.lat) < 0.5 && Math.abs(R8(ida).value.lon - q8.answer.lon) < 0.5, 'value comes back as lat/lon');
+assert.equal(R8(idb).delta, Math.round(12 * (1 - (0.06 - 0.02) / (0.2 - 0.02))), 'partial credit by distance');
+assert.equal(R8(idb).correct, false);
+assert.equal(R8(idc).delta, 0);
+assert.equal(imageValue(q8, { x: 0.5, y: 0.02 }).inside, false, 'letterbox is off the picture');
+assert.deepEqual(st.reveal.answer, q8.answer);
+assert.equal(st.reveal.exact, 0.02);
+console.log('✓ q8 image', Object.fromEntries(st.players.map((p: any) => [p.name, p.result.delta])));
+
 // Run to the end
-for (let i = 7; i < questions.length; i++) {
+for (let i = 8; i < questions.length; i++) {
   await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
   await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
 }
@@ -265,13 +294,13 @@ async function playTwoRoundsWith(mode: 'never' | 'random', random?: () => number
   return { statuses, flags };
 }
 let r = await playTwoRoundsWith('never');
-assert.deepEqual(r.statuses, ['available', 'used', 'used', 'used', 'used', 'used', 'used', 'used'], 'never: spent for the whole quiz');
-assert.deepEqual(r.flags, [true, false, false, false, false, false, false, false]);
+assert.deepEqual(r.statuses, ['available', 'used', 'used', 'used', 'used', 'used', 'used', 'used', 'used'], 'never: spent for the whole quiz');
+assert.deepEqual(r.flags, [true, false, false, false, false, false, false, false, false]);
 // random: scripted dice -> replenish only on q3 and q6 (0-based 2 and 5)
-const dice = [0.9, 0.1, 0.9, 0.9, 0.1, 0.9, 0.9]; let di = 0;
+const dice = [0.9, 0.1, 0.9, 0.9, 0.1, 0.9, 0.9, 0.9]; let di = 0;
 r = await playTwoRoundsWith('random', () => dice[di++]);
-assert.deepEqual(r.flags, [true, false, true, false, false, true, false, false]);
-assert.deepEqual(r.statuses, ['available', 'used', 'available', 'available', 'available', 'available', 'available', 'available']);
+assert.deepEqual(r.flags, [true, false, true, false, false, true, false, false, false]);
+assert.deepEqual(r.statuses, ['available', 'used', 'available', 'available', 'available', 'available', 'available', 'available', 'available']);
 console.log('✓ replenish modes never/random');
 
 console.log('\nAll good.');

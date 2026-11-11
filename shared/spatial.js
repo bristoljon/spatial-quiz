@@ -69,6 +69,72 @@ export function xyPosition(q, value) {
   };
 }
 
+// --- image: a picture letterboxed into the board, the answer is a point ----
+//
+// The image is scaled to fit the 16:10 board, centred, never cropped or
+// stretched, so a normalised board position lands on the same pixel on every
+// device. `q.image.width`/`height` (pixels) give its shape; the server never
+// loads the file.
+//
+// Positions on the image are fractions 0..1 of its width and height. An
+// answer can be given as fractions {x,y}, pixels {px,py}, or, when the image
+// is an equirectangular map with `bounds`, as {lat,lon}.
+
+export function imageRect(q) {
+  const { width, height } = q.image;
+  const aspect = width && height ? width / height : BOARD_ASPECT;
+  if (aspect >= BOARD_ASPECT) {
+    const h = BOARD_ASPECT / aspect; // full width, letterboxed top and bottom
+    return { x: 0, y: (1 - h) / 2, w: 1, h };
+  }
+  const w = aspect / BOARD_ASPECT;   // full height, pillarboxed left and right
+  return { x: (1 - w) / 2, y: 0, w, h: 1 };
+}
+
+// Any accepted answer form -> fractions of the image.
+export function imageFraction(q, a) {
+  if (!a) return { x: 0.5, y: 0.5 };
+  if (typeof a.lat === 'number' && typeof a.lon === 'number') {
+    const b = q.image.bounds ?? { north: 90, south: -90, west: -180, east: 180 };
+    return { x: (a.lon - b.west) / (b.east - b.west), y: (b.north - a.lat) / (b.north - b.south) };
+  }
+  if (typeof a.px === 'number' && typeof a.py === 'number') {
+    return { x: a.px / q.image.width, y: a.py / q.image.height };
+  }
+  return { x: Number(a.x) || 0, y: Number(a.y) || 0 };
+}
+
+// Board position of a point on the image (given in any answer form).
+export function imagePosition(q, a) {
+  const r = imageRect(q);
+  const f = imageFraction(q, a);
+  return { x: r.x + f.x * r.w, y: r.y + f.y * r.h };
+}
+
+// Board position -> where on the image it is. Fractions may fall outside
+// 0..1 when the avatar is in the letterbox; `inside` says so. With `bounds`
+// the point also comes back as lat/lon.
+export function imageValue(q, p) {
+  const r = imageRect(q);
+  const x = (p.x - r.x) / r.w;
+  const y = (p.y - r.y) / r.h;
+  const out = { x: round3(x), y: round3(y), inside: x >= 0 && x <= 1 && y >= 0 && y <= 1 };
+  const b = q.image.bounds;
+  if (b) {
+    out.lat = round3(b.north - y * (b.north - b.south));
+    out.lon = round3(b.west + x * (b.east - b.west));
+  }
+  return out;
+}
+
+// Distance between two board positions as a fraction of the board's width,
+// so a circle of this radius is round on screen (see Ring in Board.jsx).
+export function boardDistance(a, b) {
+  return Math.hypot(a.x - b.x, (a.y - b.y) / BOARD_ASPECT);
+}
+
+const round3 = (v) => Math.round(v * 1000) / 1000;
+
 // --- wager: two halves, distance from the centre line is the stake --------
 
 export const WAGER_FULL_AT = 0.42; // |x - 0.5| at which the stake is 100%

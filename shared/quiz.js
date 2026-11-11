@@ -15,6 +15,11 @@
 //           { axes: {x:{label,min,max,step?}, y:{...}}, answer: {x,y}, exact?, zeroAt? (board fractions) }
 //   wager   two sides. The further from the middle, the more you stake. Wrong side loses points.
 //           { left: {text}, right: {text}, answer: 'left'|'right' }
+//   image   a picture fills the board; the answer is a point on it. Score falls off with distance.
+//           { image: {src, width, height, bounds?}, answer: {px,py} | {x,y} | {lat,lon} (+ label?), exact?, zeroAt? (board-width fractions) }
+//           src is a path under web/public (or a full URL); width/height are the file's pixels.
+//           Give the answer in pixels of the file, or in fractions of its width/height, or,
+//           for an equirectangular map with bounds {north,south,west,east}, in lat/lon.
 
 export const quiz = {
   id: 'spatial-demo-1',
@@ -106,7 +111,16 @@ export const quiz = {
       note: '8,849 m, first climbed by Hillary and Tenzing on 29 May 1953.',
     },
     {
-      id: 'q8', type: 'wager', points: 15, timeLimit: 20,
+      id: 'q8', type: 'image', points: 12, timeLimit: 30,
+      prompt: 'Find Easter Island.',
+      // NASA Blue Marble, public domain. Whole globe, so lat/lon map straight onto it.
+      image: { src: '/img/world.jpg', width: 1920, height: 960, bounds: { north: 90, south: -90, west: -180, east: 180 } },
+      answer: { lat: -27.1, lon: -109.35, label: 'Easter Island' },
+      exact: 0.02, zeroAt: 0.2,
+      note: 'Rapa Nui, 3,500 km west of Chile. Home to nearly 900 moai.',
+    },
+    {
+      id: 'q9', type: 'wager', points: 15, timeLimit: 20,
       prompt: 'Final wager. Octopuses have three hearts.',
       left: { text: 'True' }, right: { text: 'False' },
       answer: 'left',

@@ -20,9 +20,41 @@ right/wrong:
 | `range`  | A number line                           | Full points within `exact`, falling linearly to zero at `zeroAt` |
 | `xy`     | Two axes (e.g. year vs price)           | Same falloff, by distance on the board                          |
 | `wager`  | Two halves; distance from the middle is your stake | Win or **lose** `points × stake`                      |
+| `image`  | A picture; the answer is a point on it  | Same falloff, by distance from the point                        |
 
 Questions live in [shared/quiz.js](shared/quiz.js), grouped into rounds.
 Answers never leave the server.
+
+### Image questions
+
+"Find Stroud on this map", "which part of this engine is the alternator":
+the picture fills the board and players stand on the answer.
+
+```js
+{
+  id: 'q8', type: 'image', points: 12, timeLimit: 30,
+  prompt: 'Find Easter Island.',
+  image: { src: '/img/world.jpg', width: 1920, height: 960, bounds: { north: 90, south: -90, west: -180, east: 180 } },
+  answer: { lat: -27.1, lon: -109.35, label: 'Easter Island' },
+  exact: 0.02, zeroAt: 0.2,
+}
+```
+
+- `src` is a file under [web/public](web/public) (served from `/`, deployed
+  with the site) or a full URL. `width` and `height` are the file's pixel size;
+  the picture is scaled to fit the 16:10 board without cropping, so the same
+  board position hits the same pixel on a phone and on the big screen. The
+  server never loads the file, which is why it needs the size. The browser
+  logs a warning if the real file disagrees.
+- The answer is a point, in whichever form is handiest: pixels in the file
+  `{ px, py }` (read them off any image editor), fractions of its width and
+  height `{ x, y }`, or, for an equirectangular map with `bounds`,
+  `{ lat, lon }`. An optional `label` is shown at the reveal.
+- `exact` and `zeroAt` are radii as fractions of the board's width (defaults
+  0.02 and 0.25), drawn as rings at the reveal.
+
+The bundled [world.jpg](web/public/img/world.jpg) is NASA's Blue Marble
+(public domain) and covers the whole globe, so any lat/lon works on it.
 
 ### Speed bonus
 

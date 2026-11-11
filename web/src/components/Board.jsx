@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import Avatar from './Avatar.jsx';
-import { describe, fmt } from '../format.js';
-import { zonesFor, rangeX, rangeValue, xyPosition, RANGE_PAD, XY_PAD, WAGER_FULL_AT, BOARD_ASPECT } from '../../../shared/spatial.js';
+import { describe, describePoint, fmt } from '../format.js';
+import { zonesFor, rangeX, rangeValue, xyPosition, imageRect, imagePosition, RANGE_PAD, XY_PAD, WAGER_FULL_AT, BOARD_ASPECT } from '../../../shared/spatial.js';
 
 const SEND_EVERY_MS = 70;
 const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth labelling
@@ -107,6 +107,7 @@ export default function Board({ question: q, players, meId, controlId = meId, re
       {q.type === 'range' && <RangeLayer q={q} reveal={reveal} hint={hint} mine={interactive && !reveal ? myPos : null} hover={hover} />}
       {q.type === 'xy' && <XyLayer q={q} reveal={reveal} hint={hint} />}
       {q.type === 'wager' && <WagerLayer q={q} reveal={reveal} hint={hint} />}
+      {q.type === 'image' && <ImageLayer q={q} reveal={reveal} hint={hint} />}
 
       <div className="fx">
         {fx.map((f) => <div key={f.key} className={`fx-${f.type}`} style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%` }} />)}
@@ -252,6 +253,40 @@ function ticksFor(axis) {
 // A circle of radius r (board-width fraction) that stays round on a 16:10 board.
 function Ring({ cx, cy, r, cls }) {
   return <div className={`ring ${cls}`} style={{ left: pct(cx), top: pct(cy), width: pct(2 * r), height: pct(2 * r * BOARD_ASPECT) }} />;
+}
+
+// The picture, letterboxed to the same rectangle on every device, with the
+// answer (and its scoring rings) drawn over it at the reveal.
+function ImageLayer({ q, reveal, hint }) {
+  const r = imageRect(q);
+  const target = reveal ? imagePosition(q, reveal.answer) : null;
+  const hinted = hint && !reveal ? imagePosition(q, hint.answer) : null;
+  // The declared size is what positions are scored against, so shout if the file disagrees.
+  const onLoad = (ev) => {
+    const { naturalWidth: w, naturalHeight: h } = ev.currentTarget;
+    if (w && h && Math.abs(w / h - q.image.width / q.image.height) > 0.01) {
+      console.warn(`Question ${q.id}: image is ${w}×${h} but the quiz says ${q.image.width}×${q.image.height}; answers will be off`);
+    }
+  };
+  return (
+    <div className="layer image-layer">
+      <img src={q.image.src} alt="" draggable={false} onLoad={onLoad} style={{ left: pct(r.x), top: pct(r.y), width: pct(r.w), height: pct(r.h) }} />
+      {hinted && (
+        <div className="target hinted" style={{ left: pct(hinted.x), top: pct(hinted.y) }}>
+          <span>🔍 {describePoint(q, hint.answer)}</span>
+        </div>
+      )}
+      {target && (
+        <>
+          <Ring cx={target.x} cy={target.y} r={reveal.zeroAt} cls="zero" />
+          <Ring cx={target.x} cy={target.y} r={reveal.exact} cls="exact" />
+          <div className="target" style={{ left: pct(target.x), top: pct(target.y) }}>
+            <span>{describePoint(q, reveal.answer)}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function WagerLayer({ q, reveal, hint }) {
