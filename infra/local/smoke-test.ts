@@ -204,8 +204,35 @@ await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: 0.6, y: 0.6, r
 await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
 console.log('✓ q6 possess an invisible player');
 
+// q7: Bump. Needs placement; shoves the near, spares the far and the shielded;
+// the closest flies furthest.
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+assert.equal(last(host, 'state').room.qIndex, 6);
+assert.equal(last(a2, 'state').me.placed, false);
+await core.onMessage(a2, JSON.stringify({ type: 'player:power', power: 'bump' }));
+assert.match(last(a2, 'error').message, /Place yourself/);
+await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: 0.5, y: 0.5 }));
+assert.equal(last(a2, 'pos').x, 0.5); // clients learn they're placed from their own echoed pos
+await core.onMessage(b, JSON.stringify({ type: 'player:move', x: 0.55, y: 0.5 }));   // close
+await core.onMessage(c, JSON.stringify({ type: 'player:move', x: 0.5, y: 0.65 }));   // further
+await core.onMessage(d, JSON.stringify({ type: 'player:move', x: 0.52, y: 0.5 }));   // closest, but shielded
+await core.onMessage(d, JSON.stringify({ type: 'player:power', power: 'shield' }));
+inbox.get(host)!.length = 0;
+await core.onMessage(a2, JSON.stringify({ type: 'player:power', power: 'bump' }));
+const fx = inbox.get(host)!.find((m) => m.type === 'bump');
+assert.ok(fx && fx.x === 0.5 && fx.hits === 2, 'shockwave at the bumper, two hits');
+st = last(host, 'state');
+const P = (id: string) => st.players.find((p: any) => p.id === id);
+assert.ok(P(idb).x > 0.7, `b shoved right (${P(idb).x})`); assert.equal(P(idb).y, 0.5);
+assert.ok(P(idc).y > 0.65 && P(idc).y < P(idb).x - 0.5 + 0.5 + 0.2, `c shoved down less (${P(idc).y})`);
+assert.ok((P(idb).x - 0.55) > (P(idc).y - 0.65), 'closest flies furthest');
+assert.equal(P(idd).x, 0.52, 'shielded player unmoved');
+assert.equal(P(ida).x, 0.5, 'bumper stays put');
+await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
+console.log('✓ q7 bump');
+
 // Run to the end
-for (let i = 6; i < questions.length; i++) {
+for (let i = 7; i < questions.length; i++) {
   await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
   await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
 }

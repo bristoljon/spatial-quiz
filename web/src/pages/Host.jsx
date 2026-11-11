@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import QRCode from 'qrcode';
 import { useRoom } from '../useRoom.js';
+import { useFx } from '../useFx.js';
 import Board from '../components/Board.jsx';
 import Timer from '../components/Timer.jsx';
 import Avatar from '../components/Avatar.jsx';
@@ -19,7 +20,9 @@ export default function Host() {
     const c = load();
     if (c) send({ type: 'host:join', code: c.code, token: c.token });
   }, []);
+  const [fx, onFx] = useFx();
   const onMessage = useCallback((msg) => {
+    onFx(msg);
     if (msg.type === 'host:ok') {
       const c = { code: msg.code, token: msg.token };
       localStorage.setItem(KEY, JSON.stringify(c));
@@ -28,7 +31,7 @@ export default function Host() {
       localStorage.removeItem(KEY);
       setCreds(null);
     }
-  }, []);
+  }, [onFx]);
 
   const { status, state, send, now, lastError, clearError } = useRoom({ onOpen, onMessage });
   const phase = state?.room.phase;
@@ -87,13 +90,14 @@ export default function Host() {
             {room.phase === 'question' && <Timer endsAt={room.endsAt} timeLimit={q.timeLimit} now={now} big />}
           </div>
           <div className="stage-body">
-            <Board question={q} players={players} reveal={reveal} size="lg" />
+            <Board question={q} players={players} reveal={reveal} fx={fx} size="lg" />
             <aside className="side">
               {room.phase === 'question' ? (
                 <>
                   <div className="stat"><b>{placed + hidden}</b> / {players.length} placed</div>
                   {hidden > 0 && <div className="stat small">👻 <b>{hidden}</b> invisible</div>}
                   <button onClick={() => send({ type: 'host:end' })}>End now <kbd>E</kbd></button>
+                  <Leaderboard players={players} limit={12} />
                 </>
               ) : (
                 <>
@@ -102,7 +106,7 @@ export default function Host() {
                     <div className="answer">{describeAnswer(q, reveal)}</div>
                     {reveal?.note && <p className="note">{reveal.note}</p>}
                   </div>
-                  <Leaderboard players={players} limit={8} showDelta />
+                  <Leaderboard players={players} limit={12} showDelta />
                   <button className="primary" onClick={() => send({ type: 'host:next' })}>
                     {q.index + 1 >= q.total ? 'Final scores' : 'Next question'} <kbd>␣</kbd>
                   </button>

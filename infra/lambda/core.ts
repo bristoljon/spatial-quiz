@@ -5,7 +5,7 @@ import { quiz, questions } from '../../shared/quiz.js';
 import { scorePosition, revealFor, publicQuestion, hintFor } from '../../shared/scoring.js';
 import { clamp01 } from '../../shared/spatial.js';
 import { initialsOf, assignColor } from '../../shared/avatar.js';
-import { POWER_IDS, powerStatus, activePowers, isActive, mirrored } from '../../shared/powers.js';
+import { POWER_IDS, powerStatus, activePowers, isActive, mirrored, bumpTargets } from '../../shared/powers.js';
 import type { Store, Transport, Room, Player, Results, PlayerResult, Effect } from './types.js';
 
 // Moves arriving up to this long after endsAt still count (network latency).
@@ -277,9 +277,32 @@ export class Core {
       effects = [...effects, { type: 'possess', from: player.id, to: target.id, dropped: false }];
       await this.store.updateRoom(room.code, { effects });
     }
+    if (id === 'bump') {
+      if (player.placedQ !== room.qIndex || player.x === null) return this.transport.send(connId, { type: 'error', message: 'Place yourself on the board first' });
+      const others = (await this.store.listPlayers(room.code)).filter((o) => o.id !== player.id && o.placedQ === room.qIndex && !isActive(o.powers, 'shield', room.qIndex));
+      const moved = bumpTargets({ x: player.x, y: player.y! }, others, (quiz.settings as any)?.bump);
+      const now = Date.now();
+      await Promise.all(moved.map((m) => this.store.updatePlayer(room.code, m.id, { x: m.x, y: m.y, placedAt: now })));
+      // The shockwave is drawn where you are, so it obeys your own invisibility/mirror.
+      await this.broadcastFx(room, player, { type: 'bump', id: player.id, hits: moved.length });
+      for (const m of moved) {
+        const victim = others.find((o) => o.id === m.id)!;
+        await this.broadcastPos(room, { ...victim, x: m.x, y: m.y });
+      }
+    }
     const powers = { ...player.powers, [id]: { q: room.qIndex } };
     await this.store.updatePlayer(room.code, player.id, { powers });
     await this.broadcastState({ ...room, effects });
+  }
+
+  // A one-off visual at a player's position, transformed per viewer like a pos.
+  private async broadcastFx(room: Room, subject: Player, fx: { type: string; [k: string]: unknown }) {
+    const pos = { x: subject.x!, y: subject.y! };
+    await this.broadcast(room, (t) => {
+      if (seesTruth(t.playerId ?? null, subject.id, room)) return { ...fx, ...pos };
+      if (isActive(subject.powers, 'invisible', room.qIndex)) return null;
+      return { ...fx, ...(isActive(subject.powers, 'mirror', room.qIndex) ? mirrored(pos) : pos) };
+    });
   }
 
   // --------------------------------------------------------------- finalize
@@ -384,6 +407,7 @@ export function buildState(room: Room, players: Player[], viewerId: string | nul
           powers: Object.fromEntries(POWER_IDS.map((id) => [id, powerStatus(me.powers, id, room.qIndex, room.replenishedAt ?? 0)])),
           hint: showLive && isActive(me.powers, 'reveal', room.qIndex) ? hintFor(q) : null,
           // Who you're steering, and whether someone has you.
+          placed: showLive && me.placedQ === room.qIndex && me.x !== null,
           possessing: showLive ? (room.effects ?? []).find((e) => e.from === me.id && !e.dropped)?.to ?? null : null,
           possessed: showLive ? pick((room.effects ?? []).find((e) => e.to === me.id)) : null,
         }

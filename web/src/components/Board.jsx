@@ -10,7 +10,8 @@ const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth l
 // and (when interactive) lets this player drag their own avatar around.
 // controlId: whose avatar my drags move (myself, or someone I'm possessing).
 // targeting: when set, clicking another avatar calls onTarget(id) instead of moving.
-export default function Board({ question: q, players, meId, controlId = meId, reveal, hint = null, interactive = false, onMove, targeting = false, onTarget, size = 'md' }) {
+// fx: transient effects to draw, e.g. [{ key, type: 'bump', x, y }].
+export default function Board({ question: q, players, meId, controlId = meId, reveal, hint = null, interactive = false, onMove, targeting = false, onTarget, fx = [], size = 'md' }) {
   const ref = useRef(null);
   const [drag, setDrag] = useState(null);   // optimistic own position while the pointer is down
   const [hover, setHover] = useState(null); // desktop: value under the cursor before clicking
@@ -106,6 +107,10 @@ export default function Board({ question: q, players, meId, controlId = meId, re
       {q.type === 'range' && <RangeLayer q={q} reveal={reveal} hint={hint} mine={interactive && !reveal ? myPos : null} hover={hover} />}
       {q.type === 'xy' && <XyLayer q={q} reveal={reveal} hint={hint} />}
       {q.type === 'wager' && <WagerLayer q={q} reveal={reveal} hint={hint} />}
+
+      <div className="fx">
+        {fx.map((f) => <div key={f.key} className={`fx-${f.type}`} style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%` }} />)}
+      </div>
 
       <div className="avatars">
         {shown.map((p) => (

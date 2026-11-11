@@ -40,6 +40,7 @@ class Bot {
   others = new Map<string, { x: number; y: number }>();
   followId: string | null = null;
   me = { x: 0.5, y: 0.5 };
+  placed = false;
   constructor(public name: string, public tag: string, public color: string, public p: Personality) {}
 
   start() {
@@ -63,6 +64,7 @@ class Bot {
       this.qIndex = m.room.qIndex;
       this.others.clear();
       this.followId = this.p.copycat ? pick(m.players.filter((p: any) => p.id !== this.playerId).map((p: any) => p.id)) ?? null : null;
+      this.placed = false;
       this.playQuestion(m.question, m.room.endsAt - m.serverNow);
     }
     if (m.room.phase === 'reveal' && m.room.qIndex === this.qIndex) {
@@ -95,7 +97,7 @@ class Bot {
     }
     if (Math.random() < this.p.powerLust) {
       this.after(rnd(500, Math.max(600, settle)), () => {
-        const power = pick(POWER_IDS);
+        const power = pick(POWER_IDS.filter((id) => id !== 'bump' || this.placed));
         const target = power === 'possess' ? pick([...this.others.keys()]) : undefined;
         if (power === 'possess' && !target) return;
         log(`${this.name} uses ${power}${target ? ' on someone' : ''}`);
@@ -140,6 +142,7 @@ class Bot {
       this.after(i * 70, () => {
         const t = i / steps;
         this.me = { x: clamp01(from.x + (to.x - from.x) * t + gauss() * 0.004), y: clamp01(from.y + (to.y - from.y) * t + gauss() * 0.004) };
+        this.placed = true;
         this.send({ type: 'player:move', x: this.me.x, y: this.me.y, release: i === steps });
       });
     }

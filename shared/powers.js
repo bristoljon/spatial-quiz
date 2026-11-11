@@ -5,8 +5,26 @@ export const POWERS = [
   { id: 'double', icon: '⚡', name: 'Double down', key: '3', desc: 'Double any points you earn this question. Losses stay as they are.' },
   { id: 'possess', icon: '🕹️', name: 'Possess', key: '4', targeted: true, desc: 'Take control of someone. Drag them wherever you like; where you drop them, they stay locked until the reveal. Your own avatar is frozen until you drop them.' },
   { id: 'mirror', icon: '🪞', name: 'Mirror', key: '5', desc: 'Everyone else sees your avatar reflected through the centre of the board.' },
-  { id: 'shield', icon: '🛡️', name: 'Shield', key: '6', desc: "You can't be possessed this question." },
+  { id: 'shield', icon: '🛡️', name: 'Shield', key: '6', desc: "You can't be possessed or bumped this question." },
+  { id: 'bump', icon: '💥', name: 'Bump', key: '7', needsPlacement: true, desc: 'Shove everyone near you out of the way. The closer they are, the further they fly. You need to be on the board first.' },
 ];
+
+// Where everyone ends up after `from` bumps. Push is radial, strongest for
+// the closest, zero at the edge of the radius. Returns [{ id, x, y }].
+export function bumpTargets(from, others, { radius = 0.2, push = 0.25 } = {}) {
+  const out = [];
+  for (const o of others) {
+    if (o.x === null || o.x === undefined) continue;
+    let dx = o.x - from.x, dy = o.y - from.y;
+    let d = Math.hypot(dx, dy);
+    if (d >= radius) continue;
+    if (d < 1e-6) { const a = Math.random() * Math.PI * 2; dx = Math.cos(a); dy = Math.sin(a); d = 1; }
+    const k = push * (1 - d / radius) / d;
+    out.push({ id: o.id, x: clamp(o.x + dx * k), y: clamp(o.y + dy * k) });
+  }
+  return out;
+}
+const clamp = (v) => Math.max(0.02, Math.min(0.98, v));
 export const POWER_IDS = POWERS.map((p) => p.id);
 
 // player.powers = { [id]: { q } } recording the question each was last used on.

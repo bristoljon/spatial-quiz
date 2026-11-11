@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useRoom } from '../useRoom.js';
+import { useFx } from '../useFx.js';
 import Board from '../components/Board.jsx';
 import Timer from '../components/Timer.jsx';
 import Avatar from '../components/Avatar.jsx';
@@ -26,7 +27,9 @@ export default function Player() {
     const s = load();
     if (s?.playerId) send({ type: 'player:join', code: s.code, playerId: s.playerId, name: s.name, color: s.color });
   }, []);
+  const [fx, onFx] = useFx();
   const onMessage = useCallback((msg) => {
+    onFx(msg);
     if (msg.type === 'player:ok') {
       const s = { ...(load() || {}), code: msg.code, playerId: msg.playerId };
       localStorage.setItem(KEY, JSON.stringify(s));
@@ -36,7 +39,7 @@ export default function Player() {
       setJoining(false);
       if (msg.fatal) { localStorage.removeItem(KEY); setSaved(null); }
     }
-  }, []);
+  }, [onFx]);
 
   const { status, state, send, now, lastError, clearError } = useRoom({ onOpen, onMessage });
 
@@ -71,7 +74,7 @@ export default function Player() {
     const onKey = (e) => {
       if (e.key === 'Escape') { setArming(null); return; }
       const pw = POWERS.find((p) => p.key === e.key);
-      if (pw) { if (state?.me?.powers?.[pw.id] === 'available') usePower(pw.id); return; }
+      if (pw) { if (state?.me?.powers?.[pw.id] === 'available' && !(pw.needsPlacement && me.x === null)) usePower(pw.id); return; }
       const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
       if (!d) return;
       e.preventDefault();
@@ -164,12 +167,13 @@ export default function Player() {
                 controlId={state.me?.possessing || saved.playerId}
                 reveal={reveal} hint={state.me?.hint}
                 interactive={room.phase === 'question' && !state.me?.possessed}
-                onMove={onMove} targeting={!!arming} onTarget={onTarget}
+                onMove={onMove} targeting={!!arming} onTarget={onTarget} fx={fx}
               />
-              {room.phase === 'question' && <PowerBar status={state.me?.powers} onUse={usePower} arming={arming} />}
+              {room.phase === 'question' && <div className="mobile-only"><PowerBar status={state.me?.powers} onUse={usePower} arming={arming} placed={me?.x !== null && me?.x !== undefined} /></div>}
               {lastError && <p className="error">{lastError}</p>}
             </div>
             <aside className="side">
+              {room.phase === 'question' && <div className="desktop-only"><PowerBar status={state.me?.powers} onUse={usePower} arming={arming} placed={me?.x !== null && me?.x !== undefined} /></div>}
               {room.phase === 'reveal' && (
                 <div className={`result-card ${me?.result?.delta > 0 ? 'pos' : me?.result?.delta < 0 ? 'neg' : ''}`}>
                   <div className="delta">{me?.result ? signed(me.result.delta) : '0'}</div>

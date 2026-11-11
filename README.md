@@ -47,12 +47,13 @@ Each player gets one of each. When used ones come back is a quiz setting,
 | ⚡ Double down  | Any points you earn on this question are doubled. Losses are not.       |
 | 🕹️ Possess      | Pick a victim. Your own avatar freezes while you drag theirs; where you drop them, they're locked until the reveal. |
 | 🪞 Mirror       | Everyone else sees your avatar reflected through the board's centre. On a range that flips your number; on a wager it flips your side. |
-| 🛡️ Shield       | You can't be possessed this question. A Possess aimed at you is wasted. |
+| 🛡️ Shield       | You can't be possessed or bumped this question. A Possess aimed at you is wasted. |
+| 💥 Bump         | Shoves everyone within reach straight away from you; the closer they were, the further they fly. Only available once you're on the board. Radius and push are `settings.bump`. |
 
 While you're steering someone you see their true position even if they're
 invisible or mirrored; everyone else keeps seeing nothing, or the reflection.
 
-They stack. Keys **1–6** on a keyboard; Possess then waits for you to click a victim (Esc cancels). Power-ups are private: the
+They stack. Keys **1–7** on a keyboard; Possess then waits for you to click a victim (Esc cancels). Power-ups are private: the
 server only tells you about your own, so nobody else (including the big
 screen) can see what you used.
 

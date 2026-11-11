@@ -30,6 +30,9 @@ export const quiz = {
     //   'random' - at the start of each question there's a `randomChance`
     //              that everyone's power-ups are refreshed (announced on screen)
     powerUps: { replenish: 'round', randomChance: 0.3 },
+    // Bump: how close someone must be to get shoved (board fraction) and how
+    // far the closest possible victim flies.
+    bump: { radius: 0.2, push: 0.25 },
   },
   rounds: [
     {
