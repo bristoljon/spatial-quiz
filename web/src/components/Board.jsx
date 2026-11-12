@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import Avatar from './Avatar.jsx';
 import { describe, describePoint, fmt } from '../format.js';
-import { zonesFor, rangeX, rangeValue, xyPosition, imageRect, imagePosition, RANGE_PAD, XY_PAD, WAGER_FULL_AT, BOARD_ASPECT } from '../../../shared/spatial.js';
+import { zonesFor, rangeX, rangeValue, xyPosition, imageRect, imagePosition, imageBox, media, RANGE_PAD, XY_PAD, WAGER_FULL_AT, BOARD_ASPECT } from '../../../shared/spatial.js';
 
 const SEND_EVERY_MS = 70;
 const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth labelling
@@ -11,7 +11,10 @@ const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth l
 // controlId: whose avatar my drags move (myself, or someone I'm possessing).
 // targeting: when set, clicking another avatar calls onTarget(id) instead of moving.
 // fx: transient effects to draw, e.g. [{ key, type: 'bump', x, y }].
-export default function Board({ question: q, players, meId, controlId = meId, reveal, hint = null, interactive = false, onMove, targeting = false, onTarget, fx = [], size = 'md' }) {
+// video: the room's video state to follow; videoRef: given by the host, whose
+// element is the one everyone else follows. now: server-clock function.
+// sources: preloaded clips as { src: objectUrl } (see usePreload).
+export default function Board({ question: q, players, meId, controlId = meId, reveal, hint = null, interactive = false, onMove, targeting = false, onTarget, fx = [], size = 'md', video = null, videoRef = null, now = Date.now, sources = {} }) {
   const ref = useRef(null);
   const [drag, setDrag] = useState(null);   // optimistic own position while the pointer is down
   const [hover, setHover] = useState(null); // desktop: value under the cursor before clicking
@@ -108,6 +111,7 @@ export default function Board({ question: q, players, meId, controlId = meId, re
       {q.type === 'xy' && <XyLayer q={q} reveal={reveal} hint={hint} />}
       {q.type === 'wager' && <WagerLayer q={q} reveal={reveal} hint={hint} />}
       {q.type === 'image' && <ImageLayer q={q} reveal={reveal} hint={hint} />}
+      {q.type === 'video' && <VideoLayer key={q.id} q={q} reveal={reveal} hint={hint} video={video} videoRef={videoRef} now={now} sources={sources} />}
 
       <div className="fx">
         {fx.map((f) => <div key={f.key} className={`fx-${f.type}`} style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%` }} />)}
@@ -259,23 +263,82 @@ function Ring({ cx, cy, r, cls }) {
 // answer (and its scoring rings) drawn over it at the reveal.
 function ImageLayer({ q, reveal, hint }) {
   const r = imageRect(q);
-  const target = reveal ? imagePosition(q, reveal.answer) : null;
-  const hinted = hint && !reveal ? imagePosition(q, hint.answer) : null;
-  // The declared size is what positions are scored against, so shout if the file disagrees.
-  const onLoad = (ev) => {
-    const { naturalWidth: w, naturalHeight: h } = ev.currentTarget;
-    if (w && h && Math.abs(w / h - q.image.width / q.image.height) > 0.01) {
-      console.warn(`Question ${q.id}: image is ${w}×${h} but the quiz says ${q.image.width}×${q.image.height}; answers will be off`);
-    }
-  };
   return (
     <div className="layer image-layer">
-      <img src={q.image.src} alt="" draggable={false} onLoad={onLoad} style={{ left: pct(r.x), top: pct(r.y), width: pct(r.w), height: pct(r.h) }} />
+      <img src={q.image.src} alt="" draggable={false} onLoad={(ev) => checkSize(q, ev.currentTarget.naturalWidth, ev.currentTarget.naturalHeight)} style={rectStyle(r)} />
+      <PictureOverlay q={q} reveal={reveal} hint={hint} />
+    </div>
+  );
+}
+
+// A clip in the same rectangle. The host's element (videoRef) is the master;
+// everyone else follows the room's video state: seek to where the host is,
+// play or pause as the host did. Phones are muted so they can autoplay.
+function VideoLayer({ q, reveal, hint, video, videoRef, now, sources }) {
+  const own = useRef(null);
+  const ref = videoRef ?? own;
+  const master = !!videoRef;
+  const [blocked, setBlocked] = useState(false); // autoplay refused: needs a tap
+  // Preloaded copy if we have one, else stream it. Chosen once per question
+  // (the layer is keyed on q.id) so a late-arriving preload can't restart playback.
+  const [src] = useState(() => sources[q.video.src] ?? q.video.src);
+  const r = imageRect(q);
+
+  const sync = useCallback(() => {
+    const el = ref.current;
+    if (!el || master || !video) return;
+    const target = video.playing ? video.t + (now() - video.at) / 1000 : video.t;
+    try { if (Math.abs(el.currentTime - target) > 0.3) el.currentTime = target; } catch {}
+    if (video.playing) {
+      if (el.paused) el.play().then(() => setBlocked(false)).catch(() => setBlocked(true));
+    } else if (!el.paused) {
+      el.pause();
+    }
+  }, [ref, master, video, now]);
+
+  useEffect(() => {
+    sync();
+    if (master || !video?.playing) return;
+    const id = setInterval(sync, 2000); // correct drift while playing
+    return () => clearInterval(id);
+  }, [sync, master, video?.playing]);
+
+  return (
+    <div className="layer video-layer">
+      <video
+        ref={ref}
+        src={src}
+        muted={!master}
+        playsInline
+        preload="auto"
+        disablePictureInPicture
+        onLoadedMetadata={(ev) => { checkSize(q, ev.currentTarget.videoWidth, ev.currentTarget.videoHeight); sync(); }}
+        onCanPlay={sync}
+        style={rectStyle(r)}
+      />
+      {blocked && !master && (
+        <button type="button" className="tap-to-play" onClick={() => ref.current?.play().then(() => setBlocked(false)).catch(() => {})}>▶ Tap to play the video</button>
+      )}
+      <PictureOverlay q={q} reveal={reveal} hint={hint} />
+    </div>
+  );
+}
+
+// Hint and reveal markers for a picture: a point with rings, or a box.
+function PictureOverlay({ q, reveal, hint }) {
+  const box = reveal ? imageBox(q, reveal.answer) : null;
+  const target = reveal && !box ? imagePosition(q, reveal.answer) : null;
+  const hintBox = hint && !reveal ? imageBox(q, hint.answer) : null;
+  const hinted = hint && !reveal && !hintBox ? imagePosition(q, hint.answer) : null;
+  return (
+    <>
+      {hintBox && <div className="answer-box hinted" style={rectStyle(hintBox)}><span>🔍 {describePoint(q, hint.answer)}</span></div>}
       {hinted && (
         <div className="target hinted" style={{ left: pct(hinted.x), top: pct(hinted.y) }}>
           <span>🔍 {describePoint(q, hint.answer)}</span>
         </div>
       )}
+      {box && <div className="answer-box" style={rectStyle(box)}><span>{describePoint(q, reveal.answer)}</span></div>}
       {target && (
         <>
           <Ring cx={target.x} cy={target.y} r={reveal.zeroAt} cls="zero" />
@@ -285,9 +348,19 @@ function ImageLayer({ q, reveal, hint }) {
           </div>
         </>
       )}
-    </div>
+    </>
   );
 }
+
+// The declared size is what positions are scored against, so shout if the file disagrees.
+function checkSize(q, w, h) {
+  const m = media(q);
+  if (w && h && Math.abs(w / h - m.width / m.height) > 0.01) {
+    console.warn(`Question ${q.id}: file is ${w}×${h} but the quiz says ${m.width}×${m.height}; answers will be off`);
+  }
+}
+
+const rectStyle = (r) => ({ left: pct(r.x), top: pct(r.y), width: pct(r.w), height: pct(r.h) });
 
 function WagerLayer({ q, reveal, hint }) {
   const side = (which) => {

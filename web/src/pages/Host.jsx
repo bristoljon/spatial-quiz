@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import QRCode from 'qrcode';
 import { useRoom } from '../useRoom.js';
+import { usePreload } from '../usePreload.js';
 import { useFx } from '../useFx.js';
 import Board from '../components/Board.jsx';
 import Timer from '../components/Timer.jsx';
@@ -35,17 +36,66 @@ export default function Host() {
 
   const { status, state, send, now, lastError, clearError } = useRoom({ onOpen, onMessage });
   const phase = state?.room.phase;
+  const q = state?.question;
+  const sources = usePreload(state?.quiz.videos);
+
+  // Video questions: this screen's <video> is the one everyone follows.
+  const videoRef = useRef(null);
+  const hasVideo = q?.type === 'video';
+  const canSteer = hasVideo && (phase === 'intro' || phase === 'locked' || phase === 'reveal');
+  const report = useCallback((playing) => {
+    const el = videoRef.current;
+    if (el) send({ type: 'host:video', playing, t: el.currentTime });
+  }, [send]);
+  const play = useCallback(() => { const el = videoRef.current; if (!el || !canSteer) return; el.play().catch(() => {}); report(true); }, [canSteer, report]);
+  const pause = useCallback(() => { const el = videoRef.current; if (!el || !canSteer) return; el.pause(); report(false); }, [canSteer, report]);
+  const toggle = useCallback(() => (videoRef.current?.paused ? play() : pause()), [play, pause]);
+  const seek = useCallback((d) => {
+    const el = videoRef.current;
+    if (!el || !canSteer) return;
+    el.currentTime = Math.max(0, Math.min(el.duration || 1e9, el.currentTime + d));
+    report(!el.paused);
+  }, [canSteer, report]);
+  const startClock = useCallback(() => {
+    const el = videoRef.current;
+    if (el) el.pause();
+    send({ type: 'host:clock', t: el ? el.currentTime : undefined });
+  }, [send]);
+  // Heartbeat while playing (keeps phones in step) and a final pause when the clip ends.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || !hasVideo) return;
+    const onEnded = () => report(false);
+    el.addEventListener('ended', onEnded);
+    const id = setInterval(() => { if (!el.paused && !el.ended) report(true); }, 3000);
+    return () => { el.removeEventListener('ended', onEnded); clearInterval(id); };
+  }, [hasVideo, q?.id, report]);
 
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.tagName === 'INPUT') return;
-      if (e.code === 'Space' || e.key === 'ArrowRight') { e.preventDefault(); if (phase !== 'question') send({ type: 'host:next' }); }
-      if (e.key === 'e' && phase === 'question') send({ type: 'host:end' });
-      if (e.key === 'f') document.documentElement.requestFullscreen?.();
+      const next = () => send({ type: 'host:next' });
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          if (canSteer && phase !== 'reveal') toggle();
+          else if (phase === 'intro') startClock();
+          else if (phase !== 'question' && phase !== 'locked') next();
+          break;
+        case 'Enter':
+          if (phase === 'intro') startClock();
+          else if (phase === 'locked') send({ type: 'host:reveal' });
+          else if (phase !== 'question') next();
+          break;
+        case 'ArrowRight': if (canSteer) seek(5); else if (phase !== 'question' && phase !== 'locked') next(); break;
+        case 'ArrowLeft': if (canSteer) seek(-5); break;
+        case 'e': if (phase === 'question') send({ type: 'host:end' }); break;
+        case 'f': document.documentElement.requestFullscreen?.(); break;
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase, send]);
+  }, [phase, send, canSteer, toggle, seek, startClock]);
 
   if (!creds || !state) {
     return (
@@ -68,9 +118,10 @@ export default function Host() {
     );
   }
 
-  const { room, question: q, players, reveal, quiz } = state;
+  const { room, players, reveal, quiz } = state;
   const placed = players.filter((p) => p.x !== null).length;
   const hidden = players.filter((p) => p.hidden).length;
+  const live = room.phase === 'intro' || room.phase === 'question' || room.phase === 'locked' || room.phase === 'reveal';
 
   return (
     <main className={`host phase-${room.phase}`}>
@@ -82,7 +133,7 @@ export default function Host() {
 
       {room.phase === 'lobby' && <Lobby room={room} players={players} onStart={() => send({ type: 'host:start' })} />}
 
-      {(room.phase === 'question' || room.phase === 'reveal') && q && (
+      {live && q && (
         <section className="stage">
           <div className="question-head">
             <RoundHead q={q} phase={room.phase} replenished={room.replenished} />
@@ -90,16 +141,34 @@ export default function Host() {
             {room.phase === 'question' && <Timer endsAt={room.endsAt} timeLimit={q.timeLimit} now={now} big />}
           </div>
           <div className="stage-body">
-            <Board question={q} players={players} reveal={reveal} fx={fx} size="lg" />
+            <Board question={q} players={players} reveal={reveal} fx={fx} size="lg" video={room.video} videoRef={hasVideo ? videoRef : null} now={now} sources={sources} />
             <aside className="side">
-              {room.phase === 'question' ? (
+              {room.phase === 'intro' && (
+                <>
+                  {hasVideo && <VideoControls videoRef={videoRef} playing={!!room.video?.playing} onToggle={toggle} onSeek={seek} />}
+                  {hasVideo && <ClipReady players={players} />}
+                  <div className="muted">{hasVideo ? 'Pause at the moment to guess from, then start the clock.' : 'Start the clock when you\'re ready.'}</div>
+                  <button className="primary" onClick={startClock}>Start the clock · {q.timeLimit}s <kbd>⏎</kbd></button>
+                  <Leaderboard players={players} limit={12} />
+                </>
+              )}
+              {room.phase === 'question' && (
                 <>
                   <div className="stat"><b>{placed + hidden}</b> / {players.length} placed</div>
                   {hidden > 0 && <div className="stat small">👻 <b>{hidden}</b> invisible</div>}
                   <button onClick={() => send({ type: 'host:end' })}>End now <kbd>E</kbd></button>
                   <Leaderboard players={players} limit={12} />
                 </>
-              ) : (
+              )}
+              {room.phase === 'locked' && (
+                <>
+                  <div className="stat">🔒 Answers locked</div>
+                  {hasVideo && <VideoControls videoRef={videoRef} playing={!!room.video?.playing} onToggle={toggle} onSeek={seek} resume />}
+                  <button className="primary" onClick={() => send({ type: 'host:reveal' })}>Show results <kbd>⏎</kbd></button>
+                  <Leaderboard players={players} limit={12} />
+                </>
+              )}
+              {room.phase === 'reveal' && (
                 <>
                   <div className="answer-card">
                     <div className="muted">Answer</div>
@@ -108,7 +177,7 @@ export default function Host() {
                   </div>
                   <Leaderboard players={players} limit={12} showDelta />
                   <button className="primary" onClick={() => send({ type: 'host:next' })}>
-                    {q.index + 1 >= q.total ? 'Final scores' : 'Next question'} <kbd>␣</kbd>
+                    {q.index + 1 >= q.total ? 'Final scores' : 'Next question'} <kbd>⏎</kbd>
                   </button>
                 </>
               )}
@@ -163,6 +232,37 @@ function Podium({ players }) {
   );
   return <div className="podium">{step(second, 2)}{step(first, 1)}{step(third, 3)}</div>;
 }
+
+// How many phones have the clip in memory. The rest will stream it, which
+// works but can lag on a busy wifi.
+function ClipReady({ players }) {
+  const online = players.filter((p) => p.online);
+  const ready = online.filter((p) => p.ready).length;
+  const all = ready === online.length;
+  return (
+    <div className={`stat small ${all ? 'good' : ''}`}>
+      {all ? '✅' : '⏳'} <b>{ready}</b> / {online.length} phones have the clip
+    </div>
+  );
+}
+
+// Play/pause and ±5s for the host's clip, with where it's up to.
+function VideoControls({ videoRef, playing, onToggle, onSeek, resume = false }) {
+  const [t, setT] = useState({ at: 0, dur: 0 });
+  useEffect(() => {
+    const id = setInterval(() => { const el = videoRef.current; if (el) setT({ at: el.currentTime, dur: el.duration || 0 }); }, 200);
+    return () => clearInterval(id);
+  }, [videoRef]);
+  return (
+    <div className="video-controls">
+      <button onClick={() => onSeek(-5)} title="Back 5s">⏪ <kbd>←</kbd></button>
+      <button className="play" onClick={onToggle}>{playing ? '⏸ Pause' : resume && t.at > 0 ? '▶ Resume' : '▶ Play'} <kbd>␣</kbd></button>
+      <button onClick={() => onSeek(5)} title="Forward 5s">⏩ <kbd>→</kbd></button>
+      <span className="time">{clock(t.at)} / {clock(t.dur)}</span>
+    </div>
+  );
+}
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}.${Math.floor((s % 1) * 10)}`;
 
 function Status({ status }) {
   return <span className={`status ${status}`} title={status}>{status === 'open' ? 'live' : status}</span>;

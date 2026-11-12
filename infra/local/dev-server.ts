@@ -34,6 +34,7 @@ const core = new Core(new MemStore(), transport, { hostPin: process.env.HOST_PIN
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json', '.woff2': 'font/woff2', '.map': 'application/json',
+  '.mp4': 'video/mp4', '.webm': 'video/webm',
 };
 
 const server = http.createServer((req, res) => {
@@ -49,7 +50,25 @@ const server = http.createServer((req, res) => {
   }
   let file = path.join(dist, path.normalize(url.pathname));
   if (!file.startsWith(dist) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(dist, 'index.html');
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': file.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000, immutable' });
+  const headers: Record<string, string | number> = {
+    'content-type': MIME[path.extname(file)] || 'application/octet-stream',
+    'cache-control': file.endsWith('index.html') ? 'no-store' : 'public, max-age=31536000, immutable',
+    'accept-ranges': 'bytes',
+  };
+  // Byte ranges, as S3/CloudFront do: Safari refuses to play video without them.
+  const size = fs.statSync(file).size;
+  const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ''));
+  if (range && (range[1] || range[2])) {
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) {
+      res.writeHead(416, { 'content-range': `bytes */${size}` });
+      return res.end();
+    }
+    res.writeHead(206, { ...headers, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1 });
+    return fs.createReadStream(file, { start, end }).pipe(res);
+  }
+  res.writeHead(200, { ...headers, 'content-length': size });
   fs.createReadStream(file).pipe(res);
 });
 

@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRoom } from '../useRoom.js';
+import { usePreload } from '../usePreload.js';
 import { useFx } from '../useFx.js';
 import Board from '../components/Board.jsx';
 import Timer from '../components/Timer.jsx';
@@ -42,6 +43,12 @@ export default function Player() {
   }, [onFx]);
 
   const { status, state, send, now, lastError, clearError } = useRoom({ onOpen, onMessage });
+  // Pull every clip in the quiz into memory from the lobby onwards, and tell
+  // the host as each one lands (again on reconnect, since `send` is fresh).
+  const sources = usePreload(state?.quiz.videos, useCallback((src) => send({ type: 'player:loaded', src }), [send]));
+  const loadedRef = useRef(sources);
+  loadedRef.current = sources;
+  useEffect(() => { if (status === 'open') for (const src of Object.keys(loadedRef.current)) send({ type: 'player:loaded', src }); }, [status, send]);
 
   const initials = initialsOf(name);
   const join = (e) => {
@@ -147,7 +154,7 @@ export default function Player() {
         </section>
       )}
 
-      {(room.phase === 'question' || room.phase === 'reveal') && q && (
+      {(room.phase === 'intro' || room.phase === 'question' || room.phase === 'locked' || room.phase === 'reveal') && q && (
         <section className="stage">
           <div className="question-head">
             <RoundHead q={q} phase={room.phase} replenished={room.replenished} />
@@ -156,6 +163,10 @@ export default function Player() {
           </div>
           <div className="stage-body">
             <div className="board-col">
+              {room.phase === 'intro' && (
+                <div className="banner">{q.type === 'video' ? '🎬 Watch. The clock starts when the host pauses the clip.' : '👀 Get ready. The host will start the clock.'}</div>
+              )}
+              {room.phase === 'locked' && <div className="banner">🔒 Answers locked. Let\'s see what happened…</div>}
               {state.me?.possessed && (
                 <div className="banner bad">🕹️ {state.me.possessed.dropped ? "You've been possessed and locked here until the reveal." : "You're being possessed! Someone else is moving you."}</div>
               )}
@@ -168,6 +179,7 @@ export default function Player() {
                 reveal={reveal} hint={state.me?.hint}
                 interactive={room.phase === 'question' && !state.me?.possessed}
                 onMove={onMove} targeting={!!arming} onTarget={onTarget} fx={fx}
+                video={room.video} now={now} sources={sources}
               />
               {room.phase === 'question' && <div className="mobile-only"><PowerBar status={state.me?.powers} onUse={usePower} arming={arming} placed={me?.x !== null && me?.x !== undefined} /></div>}
               {lastError && <p className="error">{lastError}</p>}

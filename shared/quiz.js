@@ -20,6 +20,12 @@
 //           src is a path under web/public (or a full URL); width/height are the file's pixels.
 //           Give the answer in pixels of the file, or in fractions of its width/height, or,
 //           for an equirectangular map with bounds {north,south,west,east}, in lat/lon.
+//           A box answer { box: {px,py,w,h} } scores full points anywhere inside it.
+//   video   a clip fills the board. The host plays it, pauses it, and starts the clock;
+//           players guess where something ends up; the clip resumes, then the results.
+//           { video: {src, width, height}, answer, exact?, zeroAt? } (answer forms as image)
+//
+// Any question can take clock: 'host' to wait for the host before counting down.
 
 export const quiz = {
   id: 'spatial-demo-1',
@@ -120,7 +126,16 @@ export const quiz = {
       note: 'Rapa Nui, 3,500 km west of Chile. Home to nearly 900 moai.',
     },
     {
-      id: 'q9', type: 'wager', points: 15, timeLimit: 20,
+      id: 'q9', type: 'video', points: 12, timeLimit: 20,
+      prompt: 'Where does the ball come to rest?',
+      video: { src: '/video/ball.mp4', width: 1280, height: 720 },
+      // A rendered 8s clip: the ball stops at pixel (681, 278) of 1280x720.
+      answer: { px: 681, py: 278, label: 'It stops here' },
+      exact: 0.03, zeroAt: 0.25,
+      note: 'Pause it around 3 seconds in for a sporting chance.',
+    },
+    {
+      id: 'q10', type: 'wager', points: 15, timeLimit: 20,
       prompt: 'Final wager. Octopuses have three hearts.',
       left: { text: 'True' }, right: { text: 'False' },
       answer: 'left',

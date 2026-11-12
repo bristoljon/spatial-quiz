@@ -1,4 +1,4 @@
-import { zonesFor, zoneAt, rangeValue, xyValue, wagerValue, imageValue, imageFraction } from '../../shared/spatial.js';
+import { zonesFor, zoneAt, rangeValue, xyValue, wagerValue, imageValue, imageFraction, media } from '../../shared/spatial.js';
 
 // What a position "means" for a question, as a short label.
 export function describe(q, p, { double = false } = {}) {
@@ -11,10 +11,11 @@ export function describe(q, p, { double = false } = {}) {
     case 'range': return fmt(rangeValue(q, p), q.unit);
     case 'xy': { const v = xyValue(q, p); return `${fmt(v.x)} · ${fmt(v.y)}`; }
     case 'wager': { const { side, stake } = wagerValue(p); const pts = Math.round(q.points * stake); return `${q[side].text} · ${pts === 0 ? 'nothing at stake' : `win ${double ? pts * 2 : pts} or lose ${pts}`}`; }
-    case 'image': {
+    case 'image':
+    case 'video': {
       const v = imageValue(q, p);
       if (!v.inside) return 'Off the picture';
-      return q.image.bounds ? latLon(v.lat, v.lon) : `${Math.round(v.x * 100)}% across · ${Math.round(v.y * 100)}% down`;
+      return media(q).bounds ? latLon(v.lat, v.lon) : `${Math.round(v.x * 100)}% across · ${Math.round(v.y * 100)}% down`;
     }
     default: return null;
   }
@@ -30,6 +31,7 @@ export function latLon(lat, lon) {
 export function describePoint(q, a) {
   if (!a) return '';
   if (a.label) return a.label;
+  if (a.box) return 'In the box';
   if (typeof a.lat === 'number') return latLon(a.lat, a.lon);
   const f = imageFraction(q, a);
   return `${Math.round(f.x * 100)}% across · ${Math.round(f.y * 100)}% down`;
@@ -42,7 +44,8 @@ export function describeAnswer(q, reveal) {
     case 'range': return fmt(reveal.answer, q.unit);
     case 'xy': return `${q.axes.x.label} ${fmt(reveal.answer.x)} · ${q.axes.y.label} ${fmt(reveal.answer.y)}`;
     case 'wager': return q[reveal.answer].text;
-    case 'image': return describePoint(q, reveal.answer);
+    case 'image':
+    case 'video': return describePoint(q, reveal.answer);
     default: return '';
   }
 }

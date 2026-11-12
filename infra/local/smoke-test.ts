@@ -260,8 +260,66 @@ assert.deepEqual(st.reveal.answer, q8.answer);
 assert.equal(st.reveal.exact, 0.02);
 console.log('✓ q8 image', Object.fromEntries(st.players.map((p: any) => [p.name, p.result.delta])));
 
+// q9 video: host-started clock. intro (clip plays, nobody can place) ->
+// question (paused frame, clock) -> locked (scored but withheld while the
+// clip resumes) -> reveal.
+const q9 = questions[8] as any;
+assert.equal(q9.type, 'video');
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'intro'); assert.equal(st.room.qIndex, 8);
+assert.equal(st.room.endsAt, null, 'no clock yet');
+assert.deepEqual({ playing: st.room.video.playing, t: st.room.video.t }, { playing: false, t: 0 });
+await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: 0.5, y: 0.5 }));
+assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).x, null, 'cannot place before the clock');
+await core.onMessage(a2, JSON.stringify({ type: 'player:power', power: 'shield' }));
+assert.match(last(a2, 'error').message, /during a question/);
+await core.onMessage(host, JSON.stringify({ type: 'host:end' })); // nothing to end yet
+assert.equal(last(host, 'state').room.phase, 'intro');
+// Preloading: the quiz lists its clips; phones report when they have them.
+assert.deepEqual(last(host, 'state').quiz.videos, [q9.video.src]);
+assert.equal(last(host, 'state').players.find((p: any) => p.id === ida).ready, false);
+await core.onMessage(a2, JSON.stringify({ type: 'player:loaded', src: '/video/nope.mp4' }));
+await core.onMessage(a2, JSON.stringify({ type: 'player:loaded', src: q9.video.src }));
+assert.equal(last(host, 'state').players.find((p: any) => p.id === ida).ready, true, 'host sees who has the clip');
+assert.equal(last(host, 'state').players.find((p: any) => p.id === idb).ready, false);
+inbox.get(b)!.length = 0;
+await core.onMessage(host, JSON.stringify({ type: 'host:video', playing: true, t: 0 }));
+assert.equal(last(b, 'video').playing, true, 'players follow the host\'s clip');
+await core.onMessage(host, JSON.stringify({ type: 'host:clock', t: 3.4 }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'question');
+assert.ok(st.room.endsAt > Date.now(), 'clock running');
+assert.deepEqual({ playing: st.room.video.playing, t: st.room.video.t }, { playing: false, t: 3.4 }, 'clip parked on the frame');
+await core.onMessage(host, JSON.stringify({ type: 'host:video', playing: true, t: 1 }));
+assert.equal(last(host, 'state').room.video.t, 3.4, 'host cannot move the clip while the clock runs');
+const t9 = imagePosition(q9, q9.answer);
+await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: t9.x, y: t9.y }));
+await core.onMessage(b, JSON.stringify({ type: 'player:move', x: 0.05, y: 0.05 }));
+await core.onMessage(host, JSON.stringify({ type: 'host:next' })); // ignored mid-question
+await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'locked');
+assert.equal(st.reveal, null, 'answer withheld');
+assert.equal(st.players.find((p: any) => p.id === ida).result, null, 'results withheld');
+const before9 = st.players.find((p: any) => p.id === ida).score;
+assert.equal(before9, last(a2, 'state').players.find((p: any) => p.id === ida).score);
+assert.equal(st.players.find((p: any) => p.id === ida).x, t9.x, 'positions stay on show');
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+assert.equal(last(host, 'state').room.phase, 'locked', 'must reveal before moving on');
+await core.onMessage(host, JSON.stringify({ type: 'host:video', playing: true, t: 3.4 }));
+assert.equal(last(host, 'video').playing, true, 'clip resumes while locked');
+await core.onMessage(host, JSON.stringify({ type: 'host:reveal' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'reveal');
+assert.deepEqual(st.reveal.answer, q9.answer);
+assert.equal(st.players.find((p: any) => p.id === ida).result.delta, 13, 'on the spot, first');
+assert.equal(st.players.find((p: any) => p.id === ida).score, before9 + 13, 'score lands at the reveal');
+assert.equal(st.players.find((p: any) => p.id === idb).result.delta, 0);
+console.log('✓ q9 video intro/clock/locked/reveal', Object.fromEntries(st.players.map((p: any) => [p.name, p.result.delta])));
+
 // Run to the end
-for (let i = 8; i < questions.length; i++) {
+for (let i = 9; i < questions.length; i++) {
   await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
   await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
 }
@@ -294,13 +352,13 @@ async function playTwoRoundsWith(mode: 'never' | 'random', random?: () => number
   return { statuses, flags };
 }
 let r = await playTwoRoundsWith('never');
-assert.deepEqual(r.statuses, ['available', 'used', 'used', 'used', 'used', 'used', 'used', 'used', 'used'], 'never: spent for the whole quiz');
-assert.deepEqual(r.flags, [true, false, false, false, false, false, false, false, false]);
+assert.deepEqual(r.statuses, ['available', 'used', 'used', 'used', 'used', 'used', 'used', 'used', 'used', 'used'], 'never: spent for the whole quiz');
+assert.deepEqual(r.flags, [true, false, false, false, false, false, false, false, false, false]);
 // random: scripted dice -> replenish only on q3 and q6 (0-based 2 and 5)
-const dice = [0.9, 0.1, 0.9, 0.9, 0.1, 0.9, 0.9, 0.9]; let di = 0;
+const dice = [0.9, 0.1, 0.9, 0.9, 0.1, 0.9, 0.9, 0.9, 0.9]; let di = 0;
 r = await playTwoRoundsWith('random', () => dice[di++]);
-assert.deepEqual(r.flags, [true, false, true, false, false, true, false, false, false]);
-assert.deepEqual(r.statuses, ['available', 'used', 'available', 'available', 'available', 'available', 'available', 'available', 'available']);
+assert.deepEqual(r.flags, [true, false, true, false, false, true, false, false, false, false]);
+assert.deepEqual(r.statuses, ['available', 'used', 'available', 'available', 'available', 'available', 'available', 'available', 'available', 'available']);
 console.log('✓ replenish modes never/random');
 
 console.log('\nAll good.');

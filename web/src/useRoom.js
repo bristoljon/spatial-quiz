@@ -48,12 +48,15 @@ export function useRoom({ onOpen, onMessage } = {}) {
               ...msg,
               players: msg.players.map((p) => {
                 const old = byId.get(p.id);
-                return old && !p.hidden && p.x === null && old.x !== null && msg.room.phase === 'question' ? { ...p, x: old.x, y: old.y } : p;
+                return old && !p.hidden && p.x === null && old.x !== null && (msg.room.phase === 'question' || msg.room.phase === 'locked') ? { ...p, x: old.x, y: old.y } : p;
               }),
             };
           });
         } else if (msg.type === 'pos') {
           setState((prev) => prev && { ...prev, players: prev.players.map((p) => (p.id === msg.id ? { ...p, x: msg.x, y: msg.y } : p)) });
+        } else if (msg.type === 'video') {
+          const { type, ...video } = msg;
+          setState((prev) => prev && { ...prev, room: { ...prev.room, video } });
         } else if (msg.type === 'error') {
           setLastError(msg.message);
         }

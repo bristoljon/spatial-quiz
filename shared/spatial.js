@@ -69,19 +69,23 @@ export function xyPosition(q, value) {
   };
 }
 
-// --- image: a picture letterboxed into the board, the answer is a point ----
+// --- image / video: a picture letterboxed into the board, the answer is a point or box
+
+// The picture (q.image, or the frame of q.video) is scaled to fit the 16:10
+// board, centred, never cropped or stretched, so a normalised board position
+// lands on the same pixel on every device. `width`/`height` (pixels) give its
+// shape; the server never loads the file.
 //
-// The image is scaled to fit the 16:10 board, centred, never cropped or
-// stretched, so a normalised board position lands on the same pixel on every
-// device. `q.image.width`/`height` (pixels) give its shape; the server never
-// loads the file.
-//
-// Positions on the image are fractions 0..1 of its width and height. An
-// answer can be given as fractions {x,y}, pixels {px,py}, or, when the image
-// is an equirectangular map with `bounds`, as {lat,lon}.
+// Positions on the picture are fractions 0..1 of its width and height. An
+// answer can be given as fractions {x,y}, pixels {px,py}, or, when the picture
+// is an equirectangular map with `bounds`, as {lat,lon}. A box answer is
+// { box: {px,py,w,h} } in pixels or { box: {x,y,w,h} } in fractions: full
+// points anywhere inside, falling off with distance from its edge.
+
+export const media = (q) => q.image ?? q.video;
 
 export function imageRect(q) {
-  const { width, height } = q.image;
+  const { width, height } = media(q);
   const aspect = width && height ? width / height : BOARD_ASPECT;
   if (aspect >= BOARD_ASPECT) {
     const h = BOARD_ASPECT / aspect; // full width, letterboxed top and bottom
@@ -91,24 +95,52 @@ export function imageRect(q) {
   return { x: (1 - w) / 2, y: 0, w, h: 1 };
 }
 
-// Any accepted answer form -> fractions of the image.
+// Any accepted answer form -> fractions of the picture. A box gives its centre.
 export function imageFraction(q, a) {
   if (!a) return { x: 0.5, y: 0.5 };
+  if (a.box) { const b = boxFraction(q, a.box); return { x: b.x + b.w / 2, y: b.y + b.h / 2 }; }
   if (typeof a.lat === 'number' && typeof a.lon === 'number') {
-    const b = q.image.bounds ?? { north: 90, south: -90, west: -180, east: 180 };
+    const b = media(q).bounds ?? { north: 90, south: -90, west: -180, east: 180 };
     return { x: (a.lon - b.west) / (b.east - b.west), y: (b.north - a.lat) / (b.north - b.south) };
   }
   if (typeof a.px === 'number' && typeof a.py === 'number') {
-    return { x: a.px / q.image.width, y: a.py / q.image.height };
+    const m = media(q);
+    return { x: a.px / m.width, y: a.py / m.height };
   }
   return { x: Number(a.x) || 0, y: Number(a.y) || 0 };
 }
 
-// Board position of a point on the image (given in any answer form).
+function boxFraction(q, b) {
+  if (typeof b.px === 'number') {
+    const m = media(q);
+    return { x: b.px / m.width, y: b.py / m.height, w: b.w / m.width, h: b.h / m.height };
+  }
+  return { x: Number(b.x) || 0, y: Number(b.y) || 0, w: Number(b.w) || 0, h: Number(b.h) || 0 };
+}
+
+// Board position of a point on the picture (given in any answer form).
 export function imagePosition(q, a) {
   const r = imageRect(q);
   const f = imageFraction(q, a);
   return { x: r.x + f.x * r.w, y: r.y + f.y * r.h };
+}
+
+// Board rectangle of a box answer, or null for a point.
+export function imageBox(q, a) {
+  if (!a || !a.box) return null;
+  const r = imageRect(q);
+  const b = boxFraction(q, a.box);
+  return { x: r.x + b.x * r.w, y: r.y + b.y * r.h, w: b.w * r.w, h: b.h * r.h };
+}
+
+// How far a board position is from the answer, in board widths: 0 inside a
+// box or on the point.
+export function answerDistance(q, a, p) {
+  const box = imageBox(q, a);
+  if (!box) return boardDistance(p, imagePosition(q, a));
+  const dx = Math.max(box.x - p.x, 0, p.x - (box.x + box.w));
+  const dy = Math.max(box.y - p.y, 0, p.y - (box.y + box.h));
+  return Math.hypot(dx, dy / BOARD_ASPECT);
 }
 
 // Board position -> where on the image it is. Fractions may fall outside
@@ -119,7 +151,7 @@ export function imageValue(q, p) {
   const x = (p.x - r.x) / r.w;
   const y = (p.y - r.y) / r.h;
   const out = { x: round3(x), y: round3(y), inside: x >= 0 && x <= 1 && y >= 0 && y <= 1 };
-  const b = q.image.bounds;
+  const b = media(q).bounds;
   if (b) {
     out.lat = round3(b.north - y * (b.north - b.south));
     out.lon = round3(b.west + x * (b.east - b.west));

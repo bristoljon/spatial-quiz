@@ -1,4 +1,14 @@
-export type Phase = 'lobby' | 'question' | 'reveal' | 'final';
+// intro:    question shown, clock not started (host-started clock, e.g. while a video plays)
+// question: clock running, players place
+// locked:   clock done, results scored but held back (video resumes), then reveal
+export type Phase = 'lobby' | 'intro' | 'question' | 'locked' | 'reveal' | 'final';
+
+// Where the host's video is, so every screen can follow it.
+export interface VideoState {
+  playing: boolean;
+  t: number;   // seconds into the clip when `at` was taken
+  at: number;  // server time
+}
 
 export interface Room {
   code: string;
@@ -10,6 +20,7 @@ export interface Room {
   results: Results | null; // for the question being revealed
   effects: Effect[];       // possessions on the current question
   replenishedAt: number;   // question index power-ups were last refreshed at
+  video?: VideoState | null; // for video questions
   createdAt: number;
 }
 
@@ -35,6 +46,7 @@ export interface Player {
   placedQ: number | null;  // which question the position belongs to
   placedAt: number | null; // server time of the last move
   powers: Record<string, { q: number }>; // question each power-up was last used on
+  loaded?: string[];       // video clips this phone has fully preloaded
 }
 
 export interface Conn {

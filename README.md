@@ -20,7 +20,8 @@ right/wrong:
 | `range`  | A number line                           | Full points within `exact`, falling linearly to zero at `zeroAt` |
 | `xy`     | Two axes (e.g. year vs price)           | Same falloff, by distance on the board                          |
 | `wager`  | Two halves; distance from the middle is your stake | Win or **lose** `points × stake`                      |
-| `image`  | A picture; the answer is a point on it  | Same falloff, by distance from the point                        |
+| `image`  | A picture; the answer is a point or box on it | Same falloff, by distance from the point or box's edge     |
+| `video`  | A clip the host plays and pauses; answer as `image` | Same, but the clock waits for the host and the clip resumes before the results |
 
 Questions live in [shared/quiz.js](shared/quiz.js), grouped into rounds.
 Answers never leave the server.
@@ -55,6 +56,53 @@ the picture fills the board and players stand on the answer.
 
 The bundled [world.jpg](web/public/img/world.jpg) is NASA's Blue Marble
 (public domain) and covers the whole globe, so any lat/lon works on it.
+
+A box answer, `{ box: { px, py, w, h } }` (or fractions `{ x, y, w, h }`),
+scores full points anywhere inside and falls off from its edge.
+
+### Video questions
+
+"Where does the ball end up?" A clip fills the board. The host plays it on
+the big screen, pauses it at the critical moment and starts the clock. Players
+guess from the paused frame. When the clock runs out the answers are locked
+and scored but kept hidden, the host plays the rest of the clip, then shows
+the results.
+
+```js
+{
+  id: 'q9', type: 'video', points: 12, timeLimit: 20,
+  prompt: 'Where does the ball come to rest?',
+  video: { src: '/video/ball.mp4', width: 1280, height: 720 },
+  answer: { px: 681, py: 278, label: 'It stops here' },
+  exact: 0.03, zeroAt: 0.25,
+}
+```
+
+- `src` is an MP4 (H.264) under [web/public](web/public) or a full URL on a
+  server that supports byte ranges (S3/CloudFront and the local server do;
+  Safari won't play video without them). `width` and `height` are the clip's
+  pixel size, used exactly as for images. Answers take the same forms as
+  images, including boxes.
+- Every screen shows the clip, letterboxed the same way, and follows the
+  host's player: play, pause and seek on the big screen are mirrored on every
+  phone, muted. A phone whose browser refuses to autoplay shows a "tap to
+  play" button.
+- Host keys while the clip is in charge: **space** play/pause, **←/→** skip
+  5s, **enter** start the clock (and, once the answers are locked, show the
+  results).
+- Clips are fetched into memory by every phone (and the big screen) as soon
+  as they join, so by the time the question comes up there's nothing to
+  download: pause and seek are instant. The host's intro panel shows how many
+  phones have it. A phone that hasn't finished (or failed) streams the clip
+  instead, which works but can lag.
+- Players can't place or use power-ups until the clock starts. The timer and
+  the finalize step are unchanged; they just begin at "Start the clock"
+  instead of "Next".
+- Any other question can also wait for the host with `clock: 'host'`.
+
+The bundled [ball.mp4](web/public/video/ball.mp4) is a rendered 8-second
+clip of a ball bouncing round a table; it comes to rest at pixel (681, 278).
+Keep clips short: every phone downloads them.
 
 ### Speed bonus
 

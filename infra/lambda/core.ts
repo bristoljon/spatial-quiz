@@ -2,11 +2,11 @@
 // an in-memory store + `ws` server for local development.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { quiz, questions } from '../../shared/quiz.js';
-import { scorePosition, revealFor, publicQuestion, hintFor } from '../../shared/scoring.js';
+import { scorePosition, revealFor, publicQuestion, hintFor, hostClock, holdsReveal } from '../../shared/scoring.js';
 import { clamp01 } from '../../shared/spatial.js';
 import { initialsOf, assignColor } from '../../shared/avatar.js';
 import { POWER_IDS, powerStatus, activePowers, isActive, mirrored, bumpTargets } from '../../shared/powers.js';
-import type { Store, Transport, Room, Player, Results, PlayerResult, Effect } from './types.js';
+import type { Store, Transport, Room, Player, Results, PlayerResult, Effect, VideoState } from './types.js';
 
 // Moves arriving up to this long after endsAt still count (network latency).
 export const GRACE_MS = 1000;
@@ -66,9 +66,13 @@ export class Core {
         case 'player:move': return this.playerMove(connId, msg);
         case 'player:power': return this.playerPower(connId, msg);
         case 'player:drop': return this.playerDrop(connId);
+        case 'player:loaded': return this.playerLoaded(connId, msg);
         case 'host:start':
         case 'host:next': return this.hostNext(connId);
         case 'host:end': return this.hostEnd(connId);
+        case 'host:clock': return this.hostClock(connId, msg);
+        case 'host:video': return this.hostVideo(connId, msg);
+        case 'host:reveal': return this.hostReveal(connId);
         case 'host:reset': return this.hostReset(connId);
         default: return this.transport.send(connId, { type: 'error', message: `Unknown message ${msg.type}` });
       }
@@ -122,22 +126,64 @@ export class Core {
   private async hostNext(connId: string) {
     const room = await this.requireHost(connId);
     if (!room) return;
-    if (room.phase === 'question') return; // use host:end first
+    if (room.phase === 'question' || room.phase === 'locked') return; // use host:end / host:reveal first
     const next = room.qIndex + 1;
     if (next >= questions.length) {
       await this.store.updateRoom(room.code, { phase: 'final', endsAt: null, results: null });
       return this.broadcastState({ ...room, phase: 'final', endsAt: null, results: null });
     }
     const q = questions[next];
-    const endsAt = Date.now() + q.timeLimit * 1000;
     // Everyone starts off the board for a new question.
     const players = await this.store.listPlayers(room.code);
     await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { x: null, y: null, placedQ: null, placedAt: null })));
-    const patch: Partial<Room> = { phase: 'question', qIndex: next, endsAt, results: null, effects: [] };
+    // A host-started clock (every video question) opens in `intro`: the
+    // question is on screen but nothing counts down until host:clock.
+    const manual = hostClock(q);
+    const endsAt = manual ? null : Date.now() + q.timeLimit * 1000;
+    const patch: Partial<Room> = {
+      phase: manual ? 'intro' : 'question', qIndex: next, endsAt, results: null, effects: [],
+      video: q.type === 'video' ? { playing: false, t: 0, at: Date.now() } : null,
+    };
     if (this.shouldReplenish(next)) patch.replenishedAt = next;
     await this.store.updateRoom(room.code, patch);
-    await this.transport.scheduleFinalize(room.code, next, endsAt + GRACE_MS);
+    if (endsAt) await this.transport.scheduleFinalize(room.code, next, endsAt + GRACE_MS);
     await this.broadcastState({ ...room, ...patch });
+  }
+
+  // intro -> question: start the countdown. For a video question the host's
+  // clip is paused at `t` (the frame everyone answers against).
+  private async hostClock(connId: string, msg: Msg) {
+    const room = await this.requireHost(connId);
+    if (!room || room.phase !== 'intro') return;
+    const q = questions[room.qIndex];
+    const endsAt = Date.now() + q.timeLimit * 1000;
+    const patch: Partial<Room> = { phase: 'question', endsAt };
+    if (room.video) patch.video = { playing: false, t: typeof msg.t === 'number' ? msg.t : videoTime(room.video), at: Date.now() };
+    await this.store.updateRoom(room.code, patch);
+    await this.transport.scheduleFinalize(room.code, room.qIndex, endsAt + GRACE_MS);
+    await this.broadcastState({ ...room, ...patch });
+  }
+
+  // The host's player is the source of truth; everyone else follows it.
+  // Allowed whenever the clock isn't running, so the clip can't move under
+  // players mid-answer.
+  private async hostVideo(connId: string, msg: Msg) {
+    const room = await this.requireHost(connId);
+    if (!room || !room.video || room.phase === 'question') return;
+    const video: VideoState = { playing: !!msg.playing, t: Math.max(0, Number(msg.t) || 0), at: Date.now() };
+    await this.store.updateRoom(room.code, { video });
+    await this.broadcast(room, () => ({ type: 'video', ...video }));
+  }
+
+  // locked -> reveal: scores land now, so the leaderboard can't give the
+  // game away while the clip plays out.
+  private async hostReveal(connId: string) {
+    const room = await this.requireHost(connId);
+    if (!room || room.phase !== 'locked' || !room.results) return;
+    const won = await this.store.updateRoom(room.code, { phase: 'reveal' }, { phase: 'locked', qIndex: room.qIndex });
+    if (!won) return;
+    await this.applyScores(room.code, room.results);
+    await this.broadcastState({ ...room, phase: 'reveal' });
   }
 
   // Do used power-ups come back on this question?
@@ -215,6 +261,21 @@ export class Core {
     await this.store.updatePlayer(room.code, subject.id, { x, y, placedQ: room.qIndex, placedAt: Date.now() });
     await this.broadcastPos(room, { ...subject, x, y });
     if (possessing && msg.release) await this.drop(room, possessing);
+  }
+
+  // A phone has a clip in memory. The host sees how many are ready before
+  // starting the clock.
+  private async playerLoaded(connId: string, msg: Msg) {
+    const conn = await this.store.getConn(connId);
+    if (!conn || conn.role !== 'player' || !conn.playerId) return;
+    const src = String(msg.src || '');
+    if (!VIDEO_SRCS.includes(src)) return;
+    const room = await this.store.getRoom(conn.room);
+    const player = await this.store.getPlayer(conn.room, conn.playerId);
+    if (!room || !player || (player.loaded ?? []).includes(src)) return;
+    await this.store.updatePlayer(room.code, player.id, { loaded: [...(player.loaded ?? []), src] });
+    // Only the host cares, and only while a video question is on the intro screen.
+    if (room.phase === 'intro' && questions[room.qIndex]?.type === 'video') await this.broadcastState(room);
   }
 
   private async playerDrop(connId: string) {
@@ -336,13 +397,20 @@ export class Core {
       }
     }
     const results: Results = { qIndex, reveal: revealFor(q), perPlayer };
-    const won = await this.store.updateRoom(code, { phase: 'reveal', results, endsAt: null }, { phase: 'question', qIndex });
+    // Video questions hold the results back until the host has played the rest of the clip.
+    const phase = holdsReveal(q) ? 'locked' : 'reveal';
+    const won = await this.store.updateRoom(code, { phase, results, endsAt: null }, { phase: 'question', qIndex });
     if (!won) return;
+    if (phase === 'reveal') await this.applyScores(code, results);
+    await this.broadcastState({ ...room, phase, results, endsAt: null });
+  }
+
+  private async applyScores(code: string, results: Results) {
+    const players = await this.store.listPlayers(code);
     await Promise.all(players.map((p) => {
-      const r = perPlayer[p.id];
+      const r = results.perPlayer[p.id];
       return r && r.delta ? this.store.updatePlayer(code, p.id, { score: p.score + r.delta }) : Promise.resolve();
     }));
-    await this.broadcastState({ ...room, phase: 'reveal', results, endsAt: null });
   }
 
   // -------------------------------------------------------------- outbound
@@ -380,7 +448,14 @@ export class Core {
 }
 
 let buildReplenish: Replenish = (quiz.settings as any)?.powerUps?.replenish ?? 'round';
+// Every clip in the quiz, so phones can fetch them in the lobby.
+export const VIDEO_SRCS: string[] = [...new Set(questions.filter((q: any) => q.type === 'video').map((q: any) => String(q.video.src)))];
 const pick = (e?: Effect) => (e ? { dropped: e.dropped } : null);
+
+// Where the clip is now, given where it was and whether it's been playing since.
+export function videoTime(v: VideoState, now = Date.now()) {
+  return v.playing ? v.t + (now - v.at) / 1000 : v.t;
+}
 
 // You see your own true position, and so does anyone currently steering you.
 function seesTruth(viewerId: string | null, subjectId: string, room: Room) {
@@ -392,14 +467,20 @@ function seesTruth(viewerId: string | null, subjectId: string, room: Room) {
 export function buildState(room: Room, players: Player[], viewerId: string | null) {
   const total = questions.length;
   const q = room.qIndex >= 0 && room.qIndex < total ? questions[room.qIndex] : null;
-  const showLive = room.phase === 'question';
+  // Positions are live (and invisibility/mirror apply) while the clock runs
+  // and while answers are locked in waiting for the reveal.
+  const showLive = room.phase === 'question' || room.phase === 'locked';
   const results = room.phase === 'reveal' ? room.results : null;
   const me = viewerId ? players.find((p) => p.id === viewerId) : null;
   return {
     type: 'state',
     serverNow: Date.now(),
-    quiz: { title: quiz.title, subtitle: quiz.subtitle, total, speedBonus: quiz.settings?.speedBonus ?? 0, replenish: buildReplenish, rounds: quiz.rounds.map((r) => ({ title: r.title, count: r.questions.length })) },
-    room: { code: room.code, phase: room.phase, qIndex: room.qIndex, endsAt: room.endsAt, hostOnline: !!room.hostConn, replenished: room.phase === 'question' && (room.replenishedAt ?? 0) === room.qIndex },
+    quiz: { title: quiz.title, subtitle: quiz.subtitle, total, speedBonus: quiz.settings?.speedBonus ?? 0, replenish: buildReplenish, rounds: quiz.rounds.map((r) => ({ title: r.title, count: r.questions.length })), videos: VIDEO_SRCS },
+    room: {
+      code: room.code, phase: room.phase, qIndex: room.qIndex, endsAt: room.endsAt, hostOnline: !!room.hostConn,
+      replenished: (room.phase === 'question' || room.phase === 'intro') && (room.replenishedAt ?? 0) === room.qIndex,
+      video: room.video ?? null,
+    },
     question: q && room.phase !== 'final' ? publicQuestion(q, room.qIndex, total) : null,
     reveal: results?.reveal ?? null,
     me: me && q && room.phase !== 'final'
@@ -423,6 +504,7 @@ export function buildState(room: Room, players: Player[], viewerId: string | nul
         const livePos = live && p.x !== null ? (flip ? mirrored({ x: p.x, y: p.y! }) : { x: p.x, y: p.y! }) : null;
         return {
           id: p.id, name: p.name, tag: p.tag, color: p.color, score: p.score, online: !!p.conn,
+          ready: q?.type === 'video' ? (p.loaded ?? []).includes((q as any).video.src) : undefined,
           x: hidden ? null : live ? livePos!.x : r ? r.x : null,
           y: hidden ? null : live ? livePos!.y : r ? r.y : null,
           hidden,

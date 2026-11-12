@@ -1,6 +1,6 @@
 // Turns a player's final board position into a value and a score.
 // Used only on the server; the browser never sees q.answer.
-import { zonesFor, zoneAt, rangeValue, xyValue, xyPosition, wagerValue, imageValue, imagePosition, boardDistance } from './spatial.js';
+import { zonesFor, zoneAt, rangeValue, xyValue, xyPosition, wagerValue, imageValue, answerDistance } from './spatial.js';
 
 // Full points within `exact`, nothing at `zeroAt`, linear in between.
 export function falloff(err, exact, zeroAt, points) {
@@ -8,6 +8,14 @@ export function falloff(err, exact, zeroAt, points) {
   if (err >= zeroAt) return 0;
   return Math.round(points * (1 - (err - exact) / (zeroAt - exact)));
 }
+
+// Does the clock wait for the host? Video questions always do: the host plays
+// the clip, pauses it, then starts the countdown.
+export const hostClock = (q) => q.type === 'video' || q.clock === 'host';
+
+// Does the question hold the results back after the clock, so the host can
+// resume the video before the reveal?
+export const holdsReveal = (q) => q.type === 'video';
 
 // Image questions: radii as fractions of the board width.
 export const IMAGE_EXACT = 0.02;
@@ -36,9 +44,10 @@ export function scorePosition(q, p) {
       const delta = falloff(err, q.exact ?? 0.03, q.zeroAt ?? 0.35, q.points);
       return { value, delta, correct: err <= (q.exact ?? 0.03) };
     }
-    case 'image': {
+    case 'image':
+    case 'video': {
       const value = imageValue(q, p);
-      const err = boardDistance(p, imagePosition(q, q.answer));
+      const err = answerDistance(q, q.answer, p);
       const delta = falloff(err, q.exact ?? IMAGE_EXACT, q.zeroAt ?? IMAGE_ZERO_AT, q.points);
       return { value, delta, correct: err <= (q.exact ?? IMAGE_EXACT) };
     }
@@ -59,7 +68,8 @@ export function revealFor(q) {
     case 'choice': return { answer: q.answer, note: q.note };
     case 'range': return { answer: q.answer, exact: q.exact ?? 0, zeroAt: q.zeroAt, note: q.note };
     case 'xy': return { answer: q.answer, exact: q.exact ?? 0.03, zeroAt: q.zeroAt ?? 0.35, note: q.note };
-    case 'image': return { answer: q.answer, exact: q.exact ?? IMAGE_EXACT, zeroAt: q.zeroAt ?? IMAGE_ZERO_AT, note: q.note };
+    case 'image':
+    case 'video': return { answer: q.answer, exact: q.exact ?? IMAGE_EXACT, zeroAt: q.zeroAt ?? IMAGE_ZERO_AT, note: q.note };
     case 'wager': return { answer: q.answer, note: q.note };
     default: return { note: q.note };
   }

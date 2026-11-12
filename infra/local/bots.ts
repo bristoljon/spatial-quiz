@@ -125,7 +125,8 @@ class Bot {
         const v = { x: q.answer.x + gauss() * err * (ax.max - ax.min) * 0.5, y: q.answer.y + gauss() * err * (ay.max - ay.min) * 0.5 };
         return xyPosition(q, v);
       }
-      case 'image': {
+      case 'image':
+      case 'video': {
         const t = imagePosition(q, q.answer);
         const r = imageRect(q);
         return { x: clamp01(t.x + gauss() * err * r.w * 0.5), y: clamp01(t.y + gauss() * err * r.h * 0.5) };
