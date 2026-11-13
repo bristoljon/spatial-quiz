@@ -26,6 +26,9 @@
 //           { video: {src, width, height}, answer, exact?, zeroAt? } (answer forms as image)
 //
 // Any question can take clock: 'host' to wait for the host before counting down.
+// A video can also give pauseAt (seconds): the host's player stops there by itself.
+
+import { oopsRound } from './rounds/oops.js';
 
 export const quiz = {
   id: 'spatial-demo-1',
@@ -143,6 +146,8 @@ export const quiz = {
     },
       ],
     },
+    // "Where does it end up?" clips from the Oops! dataset; built with tools/oops.
+    ...(oopsRound.questions.length ? [oopsRound] : []),
   ],
 };
 

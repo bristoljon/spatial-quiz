@@ -99,6 +99,42 @@ the results.
   the finalize step are unchanged; they just begin at "Start the clock"
   instead of "Next".
 - Any other question can also wait for the host with `clock: 'host'`.
+- `video.pauseAt` (seconds) stops the host's player by itself when playback
+  crosses that time on the intro screen, so the host just presses play. Playing
+  on past it isn't stopped again; seek back before it and it stops there again.
+
+### Oops! round
+
+A round of "where does it end up?" clips from the
+[Oops! dataset](https://oops.cs.columbia.edu) (Epstein, Chen & Vondrick, CVPR
+2020): about 20,000 fail videos, each annotated with the moment it goes wrong.
+The round lives in [shared/rounds/oops.js](shared/rounds/oops.js) and is left
+out of the quiz while it's empty. To build it you need ffmpeg and the dataset,
+downloaded and extracted from the site above (non-commercial use only).
+
+```bash
+node tools/oops/prepare.js --oops ~/data/oops_dataset --count 30
+```
+
+This shuffles the annotated clips, keeps ones filmed from a still camera, trims
+each to 5 s before the fail moment and 4 s after, shrinks it so phones can
+preload it, and sets `pauseAt` just before the moment. Everything goes in
+`tools/oops/work/` (gitignored). The still-camera test compares each frame to
+the clip's median background; tune it with `--min-static` (default 0.75), and
+use `--seed` for a different batch.
+
+Then open `tools/oops/work/picker.html` in a browser. For each clip you want:
+click where the thing ends up on its last frame, write the prompt ("Where does
+the toddler end up?"), and nudge the pause time if needed. Export
+`picks.json`, then:
+
+```bash
+node tools/oops/build-round.js --picks ~/Downloads/picks.json
+```
+
+That copies the chosen clips to `web/public/video/oops/` and writes the round.
+Re-running it replaces the round. Keep it to a handful of clips: every phone
+downloads all of them when it joins.
 
 The bundled [ball.mp4](web/public/video/ball.mp4) is a rendered 8-second
 clip of a ball bouncing round a table; it comes to rest at pixel (681, 278).

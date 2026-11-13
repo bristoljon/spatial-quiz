@@ -1,0 +1,151 @@
+<!doctype html>
+<!-- Template: prepare.js copies this into the work folder with the candidates filled in. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oops! round picker</title>
+<style>
+  :root { --bg: #f6f5f2; --card: #fff; --ink: #1d1c1a; --muted: #6d6a64; --line: #e2dfd8; --accent: #e4572e; --ok: #2a9d5c; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161614; --card: #22211f; --ink: #eceae5; --muted: #a09c94; --line: #3a3834; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header { position: sticky; top: 0; z-index: 2; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0 auto 0 0; }
+  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); gap: 16px; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 8px; }
+  .card.picked { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok); }
+  .card.hidden { display: none; }
+  .meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pair figure { margin: 0; }
+  .pair figcaption { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  video, .end img { width: 100%; display: block; border-radius: 6px; background: #000; }
+  .end { position: relative; cursor: crosshair; }
+  .mark { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 3px solid var(--accent); border-radius: 50%; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row input[type=text] { flex: 1; min-width: 180px; font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .row input[type=number] { width: 70px; font: inherit; padding: 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .empty { padding: 40px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Oops! round picker</h1>
+  <label><input type="checkbox" id="onlyPicked"> Show picked only</label>
+  <span id="count"></span>
+  <button class="primary" id="export">Export picks.json</button>
+</header>
+<main id="list"></main>
+<script>
+const CANDIDATES = /*CANDIDATES*/[];
+const KEY = 'oops-picker-v1';
+let picks = {};
+try { picks = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch {}
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(picks)); } catch {} render(); };
+
+const list = document.getElementById('list');
+if (!CANDIDATES.length) list.innerHTML = '<div class="empty">No candidates. Run tools/oops/prepare.js first.</div>';
+
+for (const c of CANDIDATES) {
+  const p = picks[c.id] ??= { include: false, prompt: '', px: null, py: null, pauseAt: c.pauseAt };
+  const el = document.createElement('section');
+  el.className = 'card';
+  el.dataset.id = c.id;
+  el.innerHTML = `
+    <div class="meta">${esc(c.source)} · ${c.width}×${c.height} · ${c.duration}s · still ${c.still}</div>
+    <div class="pair">
+      <figure><video src="clips/${c.id}.mp4" controls preload="metadata" playsinline></video>
+        <figcaption>The clip. It will stop itself at the pause time.</figcaption></figure>
+      <figure><div class="end"><img src="frames/${c.id}-end.jpg" alt="Last frame"><div class="mark" hidden></div></div>
+        <figcaption>Last frame: click where it ends up.</figcaption></figure>
+    </div>
+    <div class="row">
+      Pause at <input type="number" step="0.1" min="0" class="pause"> s
+      <button class="here">Use video's current time</button>
+      <button class="try">Try it</button>
+    </div>
+    <div class="row">
+      <input type="text" class="prompt" placeholder="Where does the … end up?">
+      <label><input type="checkbox" class="include"> Use in round</label>
+    </div>`;
+  list.append(el);
+
+  const video = el.querySelector('video');
+  const pause = el.querySelector('.pause');
+  const prompt = el.querySelector('.prompt');
+  const include = el.querySelector('.include');
+  const end = el.querySelector('.end');
+  const img = end.querySelector('img');
+  const mark = end.querySelector('.mark');
+
+  pause.value = p.pauseAt;
+  prompt.value = p.prompt;
+  include.checked = p.include;
+
+  const placeMark = () => {
+    if (p.px == null || !img.naturalWidth) { mark.hidden = true; return; }
+    mark.hidden = false;
+    mark.style.left = `${(p.px / c.width) * 100}%`;
+    mark.style.top = `${(p.py / c.height) * 100}%`;
+  };
+  img.addEventListener('load', placeMark);
+  addEventListener('resize', placeMark);
+  end.addEventListener('click', (e) => {
+    const r = img.getBoundingClientRect();
+    p.px = Math.round(((e.clientX - r.left) / r.width) * c.width);
+    p.py = Math.round(((e.clientY - r.top) / r.height) * c.height);
+    p.include = true;
+    include.checked = true;
+    placeMark();
+    save();
+  });
+
+  // Mirror the quiz: playing across pauseAt stops there.
+  let last = 0;
+  const watch = () => {
+    const t = video.currentTime;
+    if (!video.paused && last < p.pauseAt && t >= p.pauseAt) { video.pause(); video.currentTime = p.pauseAt; }
+    last = video.currentTime;
+    requestAnimationFrame(watch);
+  };
+  requestAnimationFrame(watch);
+
+  pause.addEventListener('change', () => { p.pauseAt = Math.max(0, Number(pause.value) || 0); save(); });
+  el.querySelector('.here').addEventListener('click', () => { p.pauseAt = Math.round(video.currentTime * 10) / 10; pause.value = p.pauseAt; save(); });
+  el.querySelector('.try').addEventListener('click', () => { video.currentTime = 0; last = 0; video.play(); });
+  prompt.addEventListener('input', () => { p.prompt = prompt.value; save(); });
+  include.addEventListener('change', () => { p.include = include.checked; save(); });
+}
+
+document.getElementById('onlyPicked').addEventListener('change', render);
+document.getElementById('export').addEventListener('click', () => {
+  const chosen = CANDIDATES.filter((c) => picks[c.id]?.include);
+  const missing = chosen.filter((c) => picks[c.id].px == null);
+  if (missing.length) { alert(`${missing.length} picked clip(s) have no answer marked yet.`); return; }
+  const out = chosen.map((c) => ({ id: c.id, prompt: picks[c.id].prompt.trim() || 'Where does it end up?', px: picks[c.id].px, py: picks[c.id].py, pauseAt: picks[c.id].pauseAt }));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }));
+  a.download = 'picks.json';
+  a.click();
+});
+
+function render() {
+  const only = document.getElementById('onlyPicked').checked;
+  let n = 0;
+  for (const el of list.querySelectorAll('.card')) {
+    const p = picks[el.dataset.id];
+    el.classList.toggle('picked', !!p.include);
+    el.classList.toggle('hidden', only && !p.include);
+    if (p.include) n++;
+  }
+  document.getElementById('count').textContent = `${n} picked of ${CANDIDATES.length}`;
+}
+render();
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]); }
+</script>
+</body>
+</html>

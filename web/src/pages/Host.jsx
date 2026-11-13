@@ -70,6 +70,28 @@ export default function Host() {
     const id = setInterval(() => { if (!el.paused && !el.ended) report(true); }, 3000);
     return () => { el.removeEventListener('ended', onEnded); clearInterval(id); };
   }, [hasVideo, q?.id, report]);
+  // video.pauseAt: while the clip is on the intro screen, stop it the moment
+  // playback crosses that time, so the host doesn't have to judge the pause.
+  // Playing on from there (or past it after a seek) isn't stopped again.
+  const pauseAt = hasVideo ? q.video.pauseAt : undefined;
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || typeof pauseAt !== 'number' || phase !== 'intro') return;
+    let last = el.currentTime;
+    let raf;
+    const tick = () => {
+      const t = el.currentTime;
+      if (!el.paused && last < pauseAt && t >= pauseAt) {
+        el.pause();
+        el.currentTime = pauseAt;
+        report(false);
+      }
+      last = el.currentTime;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [pauseAt, q?.id, phase, report]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -147,7 +169,7 @@ export default function Host() {
                 <>
                   {hasVideo && <VideoControls videoRef={videoRef} playing={!!room.video?.playing} onToggle={toggle} onSeek={seek} />}
                   {hasVideo && <ClipReady players={players} />}
-                  <div className="muted">{hasVideo ? 'Pause at the moment to guess from, then start the clock.' : 'Start the clock when you\'re ready.'}</div>
+                  <div className="muted">{hasVideo ? (typeof pauseAt === 'number' ? 'Play it: it stops itself at the moment to guess from. Then start the clock.' : 'Pause at the moment to guess from, then start the clock.') :'Start the clock when you\'re ready.'}</div>
                   <button className="primary" onClick={startClock}>Start the clock · {q.timeLimit}s <kbd>⏎</kbd></button>
                   <Leaderboard players={players} limit={12} />
                 </>

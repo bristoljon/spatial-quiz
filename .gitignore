@@ -5,3 +5,4 @@ cdk.out/
 .env.local
 *.log
 _old/
+tools/oops/work/
