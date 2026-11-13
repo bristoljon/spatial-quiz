@@ -9,22 +9,43 @@ const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth l
 // The playing surface. Draws the question's geometry, every player's avatar,
 // and (when interactive) lets this player drag their own avatar around.
 // controlId: whose avatar my drags move (myself, or someone I'm possessing).
-// targeting: when set, clicking another avatar calls onTarget(id) instead of moving.
+// targeting: the power id waiting for a target. Clicking another avatar calls
+// onTarget(id) instead of moving. For possess the same press also grabs them:
+// the drag starts at once and its moves are held until the server confirms.
+// notice: { text, tone } shown in the bottom pill when not placing.
 // fx: transient effects to draw, e.g. [{ key, type: 'bump', x, y }].
 // video: the room's video state to follow; videoRef: given by the host, whose
 // element is the one everyone else follows. now: server-clock function.
 // sources: preloaded clips as { src: objectUrl } (see usePreload).
-export default function Board({ question: q, players, meId, controlId = meId, reveal, hint = null, interactive = false, onMove, targeting = false, onTarget, fx = [], size = 'md', video = null, videoRef = null, now = Date.now, sources = {} }) {
+export default function Board({ question: q, players, meId, controlId = meId, reveal, hint = null, interactive = false, onMove, targeting = false, onTarget, fx = [], size = 'md', notice = null, video = null, videoRef = null, now = Date.now, sources = {} }) {
   const ref = useRef(null);
   const [drag, setDrag] = useState(null);   // optimistic own position while the pointer is down
   const [hover, setHover] = useState(null); // desktop: value under the cursor before clicking
   const dragging = useRef(false);
   const lastSent = useRef(0);
   const pending = useRef(null);
+  const [grab, setGrab] = useState(null); // possess target dragged before the server confirms
+  const handoff = useRef(null);           // { id, pos, released, timer }
+  const ctlRef = useRef(controlId);
+  ctlRef.current = controlId;
 
+  const shownId = grab ?? controlId;
   const me = players.find((p) => p.id === meId);
-  const ctl = players.find((p) => p.id === controlId) ?? me;
-  useEffect(() => { setDrag(null); setHover(null); }, [q?.id, reveal, controlId]);
+  const ctl = players.find((p) => p.id === shownId) ?? me;
+  useEffect(() => { setDrag(null); setHover(null); }, [q?.id, reveal]);
+  useEffect(() => {
+    const h = handoff.current;
+    if (h && controlId === h.id) {
+      // Server confirmed the possession: send where the gesture has got to.
+      clearTimeout(h.timer);
+      handoff.current = null;
+      setGrab(null);
+      if (h.pos) onMove?.(h.pos, h.released);
+      return;
+    }
+    if (!dragging.current) setDrag(null);
+  }, [controlId]);
+  useEffect(() => () => clearTimeout(handoff.current?.timer), []);
   // Once the server echoes the final position, drop the optimistic override.
   useEffect(() => { if (!dragging.current) setDrag(null); }, [ctl?.x, ctl?.y]);
 
@@ -34,6 +55,8 @@ export default function Board({ question: q, players, meId, controlId = meId, re
   }, []);
 
   const push = (p, force, release = false) => {
+    const h = handoff.current;
+    if (h && ctlRef.current !== h.id) { h.pos = p; h.released ||= release; return; }
     const t = performance.now();
     if (force || t - lastSent.current >= SEND_EVERY_MS) {
       lastSent.current = t;
@@ -48,9 +71,19 @@ export default function Board({ question: q, players, meId, controlId = meId, re
     if (!interactive || ev.button > 0) return;
     if (targeting) {
       const hit = ev.target.closest?.('.avatar[data-id]');
-      if (hit && hit.dataset.id !== meId) onTarget?.(hit.dataset.id);
-      else onTarget?.(null); // clicked empty board: cancel
-      return;
+      if (!hit || hit.dataset.id === meId) { onTarget?.(null); return; } // empty board: cancel
+      const id = hit.dataset.id;
+      onTarget?.(id);
+      if (targeting !== 'possess') return;
+      // Grab them now. If the server says no (shielded, taken), let go.
+      const timer = setTimeout(() => {
+        if (handoff.current?.id !== id) return;
+        handoff.current = null;
+        dragging.current = false;
+        setGrab(null); setDrag(null);
+      }, 3000);
+      handoff.current = { id, pos: null, released: false, timer };
+      setGrab(id);
     }
     ev.currentTarget.setPointerCapture(ev.pointerId);
     dragging.current = true;
@@ -83,7 +116,7 @@ export default function Board({ question: q, players, meId, controlId = meId, re
   if (!q) return <div className={`board ${size} empty`} ref={ref} />;
 
   const shown = players
-    .map((p) => (p.id === controlId && drag ? { ...p, x: drag.x, y: drag.y } : p))
+    .map((p) => (p.id === shownId && drag ? { ...p, x: drag.x, y: drag.y } : p))
     .filter((p) => p.x !== null && p.x !== undefined);
   const myPos = ctl ? (drag ?? (ctl.x !== null ? { x: ctl.x, y: ctl.y } : null)) : null;
   // Live: only your own value (others' numbers would be noisy and easy to copy).
@@ -91,7 +124,7 @@ export default function Board({ question: q, players, meId, controlId = meId, re
   const labelFor = (p) => {
     if (!LABELLED.has(q.type)) return null;
     if (reveal) return describe(q, p);
-    if (p.id === controlId && interactive && q.type !== 'range') return describe(q, p); // range shows the line marker instead
+    if (p.id === shownId && interactive && q.type !== 'range') return describe(q, p); // range shows the line marker instead
     return null;
   };
 
@@ -123,7 +156,7 @@ export default function Board({ question: q, players, meId, controlId = meId, re
             key={p.id}
             player={p}
             me={p.id === meId}
-            steered={p.id === controlId && controlId !== meId}
+            steered={p.id === shownId && shownId !== meId}
             dataId={p.id}
             size="sm"
             dim={!!reveal && p.result && !p.result.correct && p.result.delta <= 0}
@@ -141,11 +174,12 @@ export default function Board({ question: q, players, meId, controlId = meId, re
       )}
       {interactive && !reveal && (
         <div className="readout">
-          {targeting ? 'Click someone to possess them'
-            : myPos ? `${controlId !== meId ? `${ctl?.name}: ` : ''}${describe(q, myPos, { double: controlId === meId && (me?.powers || []).includes('double') })}`
-            : controlId !== meId ? `Drag to move ${ctl?.name}` : 'Click or drag anywhere to place yourself'}
+          {targeting && !grab ? 'Tap someone to possess them'
+            : myPos ? `${shownId !== meId ? `🕹️ ${ctl?.name}: ` : ''}${describe(q, myPos, { double: shownId === meId && (me?.powers || []).includes('double') })}`
+            : shownId !== meId ? `🕹️ Drag to move ${ctl?.name}` : 'Click or drag anywhere to place yourself'}
         </div>
       )}
+      {notice && !(interactive && !reveal) && <div className={`readout ${notice.tone ?? ''}`}>{notice.text}</div>}
     </div>
   );
 }

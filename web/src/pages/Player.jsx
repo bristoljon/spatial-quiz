@@ -69,7 +69,6 @@ export default function Player() {
     send({ type: 'player:power', power, target });
   }, [send, clearError]);
   const onTarget = useCallback((id) => { if (id && arming) usePower(arming, id); else setArming(null); }, [arming, usePower]);
-  const drop = useCallback(() => send({ type: 'player:drop' }), [send]);
 
   const inRoom = saved?.playerId && state && state.room.code === saved.code;
   const me = inRoom ? state.players.find((p) => p.id === saved.playerId) : null;
@@ -167,19 +166,14 @@ export default function Player() {
                 <div className="banner">{q.type === 'video' ? '🎬 Watch. The clock starts when the host pauses the clip.' : '👀 Get ready. The host will start the clock.'}</div>
               )}
               {room.phase === 'locked' && <div className="banner">🔒 Answers locked. Let\'s see what happened…</div>}
-              {state.me?.possessed && (
-                <div className="banner bad">🕹️ {state.me.possessed.dropped ? "You've been possessed and locked here until the reveal." : "You're being possessed! Someone else is moving you."}</div>
-              )}
-              {state.me?.possessing && (
-                <div className="banner good">🕹️ You're controlling <b>{players.find((p) => p.id === state.me.possessing)?.name}</b>. Release to lock them in place. <button type="button" onClick={drop}>Drop here</button></div>
-              )}
               <Board
                 question={q} players={players} meId={saved.playerId}
                 controlId={state.me?.possessing || saved.playerId}
                 reveal={reveal} hint={state.me?.hint}
                 interactive={room.phase === 'question' && !state.me?.possessed}
-                onMove={onMove} targeting={!!arming} onTarget={onTarget} fx={fx}
+                onMove={onMove} targeting={arming} onTarget={onTarget} fx={fx}
                 video={room.video} now={now} sources={sources}
+                notice={state.me?.possessed && room.phase === 'question' ? { tone: 'bad', text: state.me.possessed.dropped ? '🕹️ Possessed and locked until the reveal' : '🕹️ Someone is moving you!' } : null}
               />
               {room.phase === 'question' && <div className="mobile-only"><PowerBar status={state.me?.powers} onUse={usePower} arming={arming} placed={me?.x !== null && me?.x !== undefined} /></div>}
               {lastError && <p className="error">{lastError}</p>}
