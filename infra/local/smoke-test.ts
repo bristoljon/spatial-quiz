@@ -5,7 +5,8 @@ import { Core, GRACE_MS } from '../lambda/core.js';
 import { MemStore } from './mem-store.js';
 import type { Transport } from '../lambda/types.js';
 import { questions } from '../../shared/quiz.js';
-import { zonesFor, rangeX, xyPosition, imagePosition, imageRect, imageValue } from '../../shared/spatial.js';
+import { zonesFor, rangeX, xyPosition, imagePosition, imageRect, imageValue, coverRects } from '../../shared/spatial.js';
+import { holdsReveal, unveils } from '../../shared/scoring.js';
 import { initialsOf } from '../../shared/avatar.js';
 
 const inbox = new Map<string, any[]>();
@@ -163,29 +164,175 @@ assert.equal(st.players.find((p: any) => p.id === idb).result.delta, 13, 'b was 
 assert.equal(st.players.find((p: any) => p.id === idc).x, 0.2, 'reveal shows true positions');
 console.log('✓ q4 xy possess/mirror/shield', Object.fromEntries(st.players.map((p: any) => [p.name, p.result.delta])));
 
-// Round 2 starts at q5: power-ups replenish, and Reveal + Double down may stack.
+// q5 image: the answer is a point on a picture. a on it, b 6% of the board
+// width to the left (within zeroAt=0.2 -> partial), c in the bottom letterbox bar.
 const q5 = questions[4] as any;
-assert.equal(q5.round, 1);
-const z5 = zonesFor(q5.options);
-await expectScore({ a: centre(z5.find((zz: any) => zz.id === q5.answer)), b: centre(z5.find((zz: any) => zz.id === q5.answer)) }, { a: 11, b: 20 }, { a: 'invisible', b: ['reveal', 'double'] }); // both right; a settled first
+assert.equal(q5.type, 'image');
+const t5 = imagePosition(q5, q5.answer);
+const r5 = imageRect(q5);
+assert.equal(r5.w, 1); assert.ok(r5.y > 0.09 && r5.y < 0.11, '2:1 picture on a 16:10 board leaves 10% bars top and bottom');
+inbox.get(host)!.length = 0;
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+assert.equal(last(host, 'state').room.qIndex, 4);
+assert.equal(last(host, 'state').question.answer, undefined, 'players never see the point');
+assert.equal(last(host, 'state').question.image.src, q5.image.src);
+await core.onMessage(a, JSON.stringify({ type: 'player:move', x: t5.x, y: t5.y }));
+await core.onMessage(b, JSON.stringify({ type: 'player:move', x: t5.x - 0.06, y: t5.y }));
+await core.onMessage(c, JSON.stringify({ type: 'player:move', x: 0.5, y: 0.98 }));
+await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
+st = last(host, 'state');
+const R5 = (id: string) => st.players.find((p: any) => p.id === id).result;
+assert.equal(R5(ida).delta, 13, 'on the point: full points plus speed bonus');
+assert.equal(R5(ida).correct, true);
+assert.ok(Math.abs(R5(ida).value.lat - q5.answer.lat) < 0.5 && Math.abs(R5(ida).value.lon - q5.answer.lon) < 0.5, 'value comes back as lat/lon');
+assert.equal(R5(idb).delta, Math.round(12 * (1 - (0.06 - 0.02) / (0.2 - 0.02))), 'partial credit by distance');
+assert.equal(R5(idb).correct, false);
+assert.equal(R5(idc).delta, 0);
+assert.equal(imageValue(q5, { x: 0.5, y: 0.98 }).inside, false, 'letterbox is off the picture');
+assert.deepEqual(st.reveal.answer, q5.answer);
+assert.equal(st.reveal.exact, 0.02);
+console.log('✓ q5 image', Object.fromEntries(st.players.map((p: any) => [p.name, p.result.delta])));
+
+// q6 image with a reveal picture: the plain map while the clock runs, the
+// labelled one once the answers are locked. Phones preload the labelled one.
+const q6 = questions[5] as any;
+assert.equal(q6.type, 'image'); assert.ok(q6.image.reveal);
+assert.equal(unveils(q6), true); assert.equal(holdsReveal(q6), true);
+assert.deepEqual(last(host, 'state').quiz.images, [q6.image.reveal], 'reveal pictures are listed for preloading');
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'question', 'clock starts by itself: only videos wait for the host');
+assert.equal(st.room.qIndex, 5);
+assert.equal(st.question.image.reveal, q6.image.reveal);
+assert.equal(st.question.answer, undefined);
+const t6 = imagePosition(q6, q6.answer);
+await core.onMessage(a, JSON.stringify({ type: 'player:move', x: t6.x, y: t6.y }));
+await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'locked', 'results held while the picture is unveiled');
+assert.equal(st.reveal, null);
+assert.equal(st.players.find((p: any) => p.id === ida).result, null);
+const before6 = st.players.find((p: any) => p.id === ida).score;
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+assert.equal(last(host, 'state').room.phase, 'locked', 'must show the results before moving on');
+await core.onMessage(host, JSON.stringify({ type: 'host:reveal' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'reveal');
+assert.deepEqual(st.reveal.answer, q6.answer);
+assert.equal(st.players.find((p: any) => p.id === ida).result.delta, 13);
+assert.equal(st.players.find((p: any) => p.id === ida).score, before6 + 13);
+console.log('✓ q6 image with reveal picture: question/locked/reveal');
+
+// q7 image with a cover: a box is blanked out until the answers are locked.
+const q7 = questions[6] as any;
+assert.equal(q7.type, 'image'); assert.ok(q7.image.cover);
+assert.equal(holdsReveal(q7), true);
+const [c7] = coverRects(q7);
+const t7 = imagePosition(q7, q7.answer);
+assert.ok(t7.x > c7.x && t7.x < c7.x + c7.w && t7.y > c7.y && t7.y < c7.y + c7.h, 'the answer is under the cover');
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'question'); assert.equal(st.room.qIndex, 6);
+assert.deepEqual(st.question.image.cover, q7.image.cover, 'phones know where the cover is');
+await core.onMessage(b, JSON.stringify({ type: 'player:move', x: t7.x, y: t7.y }));
+await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
+assert.equal(last(host, 'state').room.phase, 'locked');
+await core.onMessage(host, JSON.stringify({ type: 'host:reveal' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'reveal');
+assert.equal(st.players.find((p: any) => p.id === idb).result.delta, 13);
+console.log('✓ q7 image with cover: question/locked/reveal');
+
+// q8 video: host-started clock. intro (clip plays, nobody can place) ->
+// question (paused frame, clock) -> locked (scored but withheld while the
+// clip resumes) -> reveal.
+const q8 = questions[7] as any;
+assert.equal(q8.type, 'video');
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'intro'); assert.equal(st.room.qIndex, 7);
+assert.equal(st.room.endsAt, null, 'no clock yet');
+assert.deepEqual({ playing: st.room.video.playing, t: st.room.video.t }, { playing: false, t: 0 });
+await core.onMessage(a, JSON.stringify({ type: 'player:move', x: 0.5, y: 0.5 }));
+assert.equal(last(a, 'state').players.find((p: any) => p.id === ida).x, null, 'cannot place before the clock');
+await core.onMessage(a, JSON.stringify({ type: 'player:power', power: 'shield' }));
+assert.match(last(a, 'error').message, /during a question/);
+await core.onMessage(host, JSON.stringify({ type: 'host:end' })); // nothing to end yet
+assert.equal(last(host, 'state').room.phase, 'intro');
+// Preloading: the quiz lists its clips; phones report when they have them.
+assert.deepEqual(last(host, 'state').quiz.videos, [q8.video.src]);
+assert.equal(last(host, 'state').players.find((p: any) => p.id === ida).ready, false);
+await core.onMessage(a, JSON.stringify({ type: 'player:loaded', src: '/video/nope.mp4' }));
+await core.onMessage(a, JSON.stringify({ type: 'player:loaded', src: q8.video.src }));
+assert.equal(last(host, 'state').players.find((p: any) => p.id === ida).ready, true, 'host sees who has the clip');
+assert.equal(last(host, 'state').players.find((p: any) => p.id === idb).ready, false);
+inbox.get(b)!.length = 0;
+await core.onMessage(host, JSON.stringify({ type: 'host:video', playing: true, t: 0 }));
+assert.equal(last(b, 'video').playing, true, 'players follow the host\'s clip');
+await core.onMessage(host, JSON.stringify({ type: 'host:clock', t: 3.4 }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'question');
+assert.ok(st.room.endsAt > Date.now(), 'clock running');
+assert.deepEqual({ playing: st.room.video.playing, t: st.room.video.t }, { playing: false, t: 3.4 }, 'clip parked on the frame');
+await core.onMessage(host, JSON.stringify({ type: 'host:video', playing: true, t: 1 }));
+assert.equal(last(host, 'state').room.video.t, 3.4, 'host cannot move the clip while the clock runs');
+const t8 = imagePosition(q8, q8.answer);
+await core.onMessage(a, JSON.stringify({ type: 'player:move', x: t8.x, y: t8.y }));
+await core.onMessage(b, JSON.stringify({ type: 'player:move', x: 0.05, y: 0.05 }));
+await core.onMessage(host, JSON.stringify({ type: 'host:next' })); // ignored mid-question
+await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'locked');
+assert.equal(st.reveal, null, 'answer withheld');
+assert.equal(st.players.find((p: any) => p.id === ida).result, null, 'results withheld');
+const before8 = st.players.find((p: any) => p.id === ida).score;
+assert.equal(before8, last(a, 'state').players.find((p: any) => p.id === ida).score);
+assert.equal(st.players.find((p: any) => p.id === ida).x, t8.x, 'positions stay on show');
+await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
+assert.equal(last(host, 'state').room.phase, 'locked', 'must reveal before moving on');
+await core.onMessage(host, JSON.stringify({ type: 'host:video', playing: true, t: 3.4 }));
+assert.equal(last(host, 'video').playing, true, 'clip resumes while locked');
+await core.onMessage(host, JSON.stringify({ type: 'host:reveal' }));
+st = last(host, 'state');
+assert.equal(st.room.phase, 'reveal');
+assert.deepEqual(st.reveal.answer, q8.answer);
+assert.equal(st.players.find((p: any) => p.id === ida).result.delta, 13, 'on the spot, first');
+assert.equal(st.players.find((p: any) => p.id === ida).score, before8 + 13, 'score lands at the reveal');
+assert.equal(st.players.find((p: any) => p.id === idb).result.delta, 0);
+// The practice round is flagged all the way down, and its last reveal still shows the points.
+assert.equal(st.quiz.rounds[0].practice, true);
+assert.equal(st.question.practice, true);
+assert.equal(q8.practice && q8.indexInRound + 1 === q8.roundTotal, true, 'q8 is the last practice question');
+const practiceScores = Object.fromEntries(st.players.map((p: any) => [p.name, p.score]));
+assert.ok(practiceScores['Ada Lovelace'] > 0 && practiceScores['Bob'] > 0, 'practice points on show at the reveal');
+console.log('✓ q8 video intro/clock/locked/reveal', Object.fromEntries(st.players.map((p: any) => [p.name, p.result.delta])));
+
+// Round 2 starts at q9: the practice scores are wiped, power-ups replenish,
+// and Reveal + Double down may stack.
+const q9 = questions[8] as any;
+assert.equal(q9.round, 1);
+assert.equal(q9.practice, false);
+const z9 = zonesFor(q9.options);
+await expectScore({ a: centre(z9.find((zz: any) => zz.id === q9.answer)), b: centre(z9.find((zz: any) => zz.id === q9.answer)) }, { a: 11, b: 20 }, { a: 'invisible', b: ['reveal', 'double'] }); // both right; a settled first
 assert.equal(preReveal(a).me.powers.invisible, 'active', 'replenished in round 2');
+assert.ok(preReveal(host).players.every((p: any) => p.score === 0), 'everyone back to 0 as round 2 opens');
 assert.deepEqual(last(b, 'state').players.find((p: any) => p.id === idb).powers.sort(), ['double', 'reveal']);
 
 
 st = last(host, 'state');
-assert.deepEqual(st.players.filter((p: any) => p.name !== 'Bo Oakes').map((p: any) => [p.name, p.score]), [['Ada Lovelace', 54], ['Bob', 28], ['Cy Lee', 0]]);
+assert.deepEqual(st.players.filter((p: any) => p.name !== 'Bo Oakes').map((p: any) => [p.name, p.score]), [['Bob', 20], ['Ada Lovelace', 11], ['Cy Lee', 0]]);
 
 // Reconnect keeps score
 inbox.delete(a);
 await core.onDisconnect(a);
 const a2 = open('a2');
 await core.onMessage(a2, JSON.stringify({ type: 'player:join', code, playerId: ida }));
-assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).score, 54);
+assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).score, 11);
 
-// q6: possessing someone who then goes invisible. Only the possessor (and the
+// q10: possessing someone who then goes invisible. Only the possessor (and the
 // victim) see where they are; the host and others see nothing.
 await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
-assert.equal(last(host, 'state').room.qIndex, 5);
+assert.equal(last(host, 'state').room.qIndex, 9);
 await core.onMessage(b, JSON.stringify({ type: 'player:move', x: 0.3, y: 0.3 }));
 await core.onMessage(a2, JSON.stringify({ type: 'player:power', power: 'possess', target: idb }));
 await core.onMessage(b, JSON.stringify({ type: 'player:power', power: 'invisible' }));
@@ -202,12 +349,12 @@ assert.ok(!inbox.get(c)!.some((m) => m.type === 'pos'), 'others get none');
 await core.onMessage(b, JSON.stringify({ type: 'player:power', power: 'mirror' }));
 await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: 0.6, y: 0.6, release: true })); // drop: a no longer privileged
 await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
-console.log('✓ q6 possess an invisible player');
+console.log('✓ q10 possess an invisible player');
 
-// q7: Bump. Needs placement; shoves the near, spares the far and the shielded;
+// q11: Bump. Needs placement; shoves the near, spares the far and the shielded;
 // the closest flies furthest.
 await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
-assert.equal(last(host, 'state').room.qIndex, 6);
+assert.equal(last(host, 'state').room.qIndex, 10);
 assert.equal(last(a2, 'state').me.placed, false);
 await core.onMessage(a2, JSON.stringify({ type: 'player:power', power: 'bump' }));
 assert.match(last(a2, 'error').message, /Place yourself/);
@@ -229,97 +376,10 @@ assert.ok((P(idb).x - 0.55) > (P(idc).y - 0.65), 'closest flies furthest');
 assert.equal(P(idd).x, 0.52, 'shielded player unmoved');
 assert.equal(P(ida).x, 0.5, 'bumper stays put');
 await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
-console.log('✓ q7 bump');
-
-// q8 image: the answer is a point on a picture. a on it, b 6% of the board
-// width to the left (within zeroAt=0.2 -> partial), c in the letterbox bar.
-const q8 = questions[7] as any;
-assert.equal(q8.type, 'image');
-const t8 = imagePosition(q8, q8.answer);
-const r8 = imageRect(q8);
-assert.equal(r8.w, 1); assert.ok(r8.y > 0.09 && r8.y < 0.11, '2:1 picture on a 16:10 board leaves 10% bars top and bottom');
-inbox.get(host)!.length = 0;
-await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
-assert.equal(last(host, 'state').room.qIndex, 7);
-assert.equal(last(host, 'state').question.answer, undefined, 'players never see the point');
-assert.equal(last(host, 'state').question.image.src, q8.image.src);
-await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: t8.x, y: t8.y }));
-await core.onMessage(b, JSON.stringify({ type: 'player:move', x: t8.x - 0.06, y: t8.y }));
-await core.onMessage(c, JSON.stringify({ type: 'player:move', x: 0.5, y: 0.02 }));
-await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
-st = last(host, 'state');
-const R8 = (id: string) => st.players.find((p: any) => p.id === id).result;
-assert.equal(R8(ida).delta, 13, 'on the point: full points plus speed bonus');
-assert.equal(R8(ida).correct, true);
-assert.ok(Math.abs(R8(ida).value.lat - q8.answer.lat) < 0.5 && Math.abs(R8(ida).value.lon - q8.answer.lon) < 0.5, 'value comes back as lat/lon');
-assert.equal(R8(idb).delta, Math.round(12 * (1 - (0.06 - 0.02) / (0.2 - 0.02))), 'partial credit by distance');
-assert.equal(R8(idb).correct, false);
-assert.equal(R8(idc).delta, 0);
-assert.equal(imageValue(q8, { x: 0.5, y: 0.02 }).inside, false, 'letterbox is off the picture');
-assert.deepEqual(st.reveal.answer, q8.answer);
-assert.equal(st.reveal.exact, 0.02);
-console.log('✓ q8 image', Object.fromEntries(st.players.map((p: any) => [p.name, p.result.delta])));
-
-// q9 video: host-started clock. intro (clip plays, nobody can place) ->
-// question (paused frame, clock) -> locked (scored but withheld while the
-// clip resumes) -> reveal.
-const q9 = questions[8] as any;
-assert.equal(q9.type, 'video');
-await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
-st = last(host, 'state');
-assert.equal(st.room.phase, 'intro'); assert.equal(st.room.qIndex, 8);
-assert.equal(st.room.endsAt, null, 'no clock yet');
-assert.deepEqual({ playing: st.room.video.playing, t: st.room.video.t }, { playing: false, t: 0 });
-await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: 0.5, y: 0.5 }));
-assert.equal(last(a2, 'state').players.find((p: any) => p.id === ida).x, null, 'cannot place before the clock');
-await core.onMessage(a2, JSON.stringify({ type: 'player:power', power: 'shield' }));
-assert.match(last(a2, 'error').message, /during a question/);
-await core.onMessage(host, JSON.stringify({ type: 'host:end' })); // nothing to end yet
-assert.equal(last(host, 'state').room.phase, 'intro');
-// Preloading: the quiz lists its clips; phones report when they have them.
-assert.deepEqual(last(host, 'state').quiz.videos, [q9.video.src]);
-assert.equal(last(host, 'state').players.find((p: any) => p.id === ida).ready, false);
-await core.onMessage(a2, JSON.stringify({ type: 'player:loaded', src: '/video/nope.mp4' }));
-await core.onMessage(a2, JSON.stringify({ type: 'player:loaded', src: q9.video.src }));
-assert.equal(last(host, 'state').players.find((p: any) => p.id === ida).ready, true, 'host sees who has the clip');
-assert.equal(last(host, 'state').players.find((p: any) => p.id === idb).ready, false);
-inbox.get(b)!.length = 0;
-await core.onMessage(host, JSON.stringify({ type: 'host:video', playing: true, t: 0 }));
-assert.equal(last(b, 'video').playing, true, 'players follow the host\'s clip');
-await core.onMessage(host, JSON.stringify({ type: 'host:clock', t: 3.4 }));
-st = last(host, 'state');
-assert.equal(st.room.phase, 'question');
-assert.ok(st.room.endsAt > Date.now(), 'clock running');
-assert.deepEqual({ playing: st.room.video.playing, t: st.room.video.t }, { playing: false, t: 3.4 }, 'clip parked on the frame');
-await core.onMessage(host, JSON.stringify({ type: 'host:video', playing: true, t: 1 }));
-assert.equal(last(host, 'state').room.video.t, 3.4, 'host cannot move the clip while the clock runs');
-const t9 = imagePosition(q9, q9.answer);
-await core.onMessage(a2, JSON.stringify({ type: 'player:move', x: t9.x, y: t9.y }));
-await core.onMessage(b, JSON.stringify({ type: 'player:move', x: 0.05, y: 0.05 }));
-await core.onMessage(host, JSON.stringify({ type: 'host:next' })); // ignored mid-question
-await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
-st = last(host, 'state');
-assert.equal(st.room.phase, 'locked');
-assert.equal(st.reveal, null, 'answer withheld');
-assert.equal(st.players.find((p: any) => p.id === ida).result, null, 'results withheld');
-const before9 = st.players.find((p: any) => p.id === ida).score;
-assert.equal(before9, last(a2, 'state').players.find((p: any) => p.id === ida).score);
-assert.equal(st.players.find((p: any) => p.id === ida).x, t9.x, 'positions stay on show');
-await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
-assert.equal(last(host, 'state').room.phase, 'locked', 'must reveal before moving on');
-await core.onMessage(host, JSON.stringify({ type: 'host:video', playing: true, t: 3.4 }));
-assert.equal(last(host, 'video').playing, true, 'clip resumes while locked');
-await core.onMessage(host, JSON.stringify({ type: 'host:reveal' }));
-st = last(host, 'state');
-assert.equal(st.room.phase, 'reveal');
-assert.deepEqual(st.reveal.answer, q9.answer);
-assert.equal(st.players.find((p: any) => p.id === ida).result.delta, 13, 'on the spot, first');
-assert.equal(st.players.find((p: any) => p.id === ida).score, before9 + 13, 'score lands at the reveal');
-assert.equal(st.players.find((p: any) => p.id === idb).result.delta, 0);
-console.log('✓ q9 video intro/clock/locked/reveal', Object.fromEntries(st.players.map((p: any) => [p.name, p.result.delta])));
+console.log('✓ q11 bump');
 
 // Run to the end
-for (let i = 9; i < questions.length; i++) {
+for (let i = 11; i < questions.length; i++) {
   await core.onMessage(host, JSON.stringify({ type: 'host:next' }));
   await core.onMessage(host, JSON.stringify({ type: 'host:end' }));
 }
@@ -348,17 +408,18 @@ async function playTwoRoundsWith(mode: 'never' | 'random', random?: () => number
     statuses.push(s.me.powers.shield);
     if (i === 0) await c2.onMessage(p, JSON.stringify({ type: 'player:power', power: 'shield' }));
     await c2.onMessage(h, JSON.stringify({ type: 'host:end' }));
+    if (last(p, 'state').room.phase === 'locked') await c2.onMessage(h, JSON.stringify({ type: 'host:reveal' }));
   }
   return { statuses, flags };
 }
 let r = await playTwoRoundsWith('never');
-assert.deepEqual(r.statuses, ['available', 'used', 'used', 'used', 'used', 'used', 'used', 'used', 'used', 'used'], 'never: spent for the whole quiz');
-assert.deepEqual(r.flags, [true, false, false, false, false, false, false, false, false, false]);
+assert.deepEqual(r.statuses, ['available', ...Array(12).fill('used')], 'never: spent for the whole quiz');
+assert.deepEqual(r.flags, [true, ...Array(12).fill(false)]);
 // random: scripted dice -> replenish only on q3 and q6 (0-based 2 and 5)
-const dice = [0.9, 0.1, 0.9, 0.9, 0.1, 0.9, 0.9, 0.9, 0.9]; let di = 0;
+const dice = [0.9, 0.1, 0.9, 0.9, 0.1, ...Array(7).fill(0.9)]; let di = 0;
 r = await playTwoRoundsWith('random', () => dice[di++]);
-assert.deepEqual(r.flags, [true, false, true, false, false, true, false, false, false, false]);
-assert.deepEqual(r.statuses, ['available', 'used', 'available', 'available', 'available', 'available', 'available', 'available', 'available', 'available']);
+assert.deepEqual(r.flags, [true, false, true, false, false, true, ...Array(7).fill(false)]);
+assert.deepEqual(r.statuses, ['available', 'used', ...Array(11).fill('available')]);
 console.log('✓ replenish modes never/random');
 
 console.log('\nAll good.');

@@ -128,13 +128,18 @@ export class Core {
     if (!room) return;
     if (room.phase === 'question' || room.phase === 'locked') return; // use host:end / host:reveal first
     const next = room.qIndex + 1;
+    const players = await this.store.listPlayers(room.code);
+    // Leaving a practice round: everything earned in it is wiped, so the
+    // next round starts level. The reveal before this still showed the points.
+    if (leavesPractice(room.qIndex)) {
+      await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { score: 0 })));
+    }
     if (next >= questions.length) {
       await this.store.updateRoom(room.code, { phase: 'final', endsAt: null, results: null });
       return this.broadcastState({ ...room, phase: 'final', endsAt: null, results: null });
     }
     const q = questions[next];
     // Everyone starts off the board for a new question.
-    const players = await this.store.listPlayers(room.code);
     await Promise.all(players.map((p) => this.store.updatePlayer(room.code, p.id, { x: null, y: null, placedQ: null, placedAt: null })));
     // A host-started clock (every video question) opens in `intro`: the
     // question is on screen but nothing counts down until host:clock.
@@ -448,8 +453,18 @@ export class Core {
 }
 
 let buildReplenish: Replenish = (quiz.settings as any)?.powerUps?.replenish ?? 'round';
+// Is `qIndex` the last question of a practice round (so moving on from it
+// resets the scores)?
+export function leavesPractice(qIndex: number) {
+  const q = qIndex >= 0 ? questions[qIndex] : null;
+  if (!q || !q.practice) return false;
+  const after = questions[qIndex + 1];
+  return !after || after.round !== q.round;
+}
 // Every clip in the quiz, so phones can fetch them in the lobby.
 export const VIDEO_SRCS: string[] = [...new Set(questions.filter((q: any) => q.type === 'video').map((q: any) => String(q.video.src)))];
+// And every picture that's swapped in at the unveiling, so the swap is instant.
+export const REVEAL_SRCS: string[] = [...new Set(questions.filter((q: any) => q.type === 'image' && q.image?.reveal).map((q: any) => String(q.image.reveal)))];
 const pick = (e?: Effect) => (e ? { dropped: e.dropped } : null);
 
 // Where the clip is now, given where it was and whether it's been playing since.
@@ -475,7 +490,7 @@ export function buildState(room: Room, players: Player[], viewerId: string | nul
   return {
     type: 'state',
     serverNow: Date.now(),
-    quiz: { title: quiz.title, subtitle: quiz.subtitle, total, speedBonus: quiz.settings?.speedBonus ?? 0, replenish: buildReplenish, rounds: quiz.rounds.map((r) => ({ title: r.title, count: r.questions.length })), videos: VIDEO_SRCS },
+    quiz: { title: quiz.title, subtitle: quiz.subtitle, total, speedBonus: quiz.settings?.speedBonus ?? 0, replenish: buildReplenish, rounds: quiz.rounds.map((r) => ({ title: r.title, count: r.questions.length, practice: !!(r as any).practice })), videos: VIDEO_SRCS, images: REVEAL_SRCS },
     room: {
       code: room.code, phase: room.phase, qIndex: room.qIndex, endsAt: room.endsAt, hostOnline: !!room.hostConn,
       replenished: (room.phase === 'question' || room.phase === 'intro') && (room.replenishedAt ?? 0) === room.qIndex,

@@ -26,6 +26,24 @@ right/wrong:
 Questions live in [shared/quiz.js](shared/quiz.js), grouped into rounds.
 Answers never leave the server.
 
+### Practice round
+
+Round 1 is a practice round: one question of each type (plus both ways of
+unveiling a picture, below), so everyone learns the format and the power-ups
+before anything is at stake. It's played for
+real and the reveal shows the points as usual, but the moment the host moves
+on to round 2 every score goes back to zero. The big screen and the phones
+flag it ("🎓 Practice · doesn't count"), and the host's button at the end of
+it says so too.
+
+```js
+{ id: 'r1', title: 'Practice', practice: true, questions: [ /* one of each type */ ] },
+{ id: 'r2', title: 'The quiz', questions: [ /* ... */ ] },
+```
+
+Remove `practice: true` (or set it to `false`) and round 1 counts like any
+other. Any round can carry the flag; its scores are wiped when it ends.
+
 ### Image questions
 
 "Find Stroud on this map", "which part of this engine is the alternator":
@@ -56,9 +74,31 @@ the picture fills the board and players stand on the answer.
 
 The bundled [world.jpg](web/public/img/world.jpg) is NASA's Blue Marble
 (public domain) and covers the whole globe, so any lat/lon works on it.
+[world-labelled.jpg](web/public/img/world-labelled.jpg) is the same picture
+with fifteen cities marked, used as the reveal picture in the practice round.
 
 A box answer, `{ box: { px, py, w, h } }` (or fractions `{ x, y, w, h }`),
 scores full points anywhere inside and falls off from its edge.
+
+#### Unveiling the picture
+
+Two ways to show less of the picture while people answer, and the rest once
+the answers are locked:
+
+```js
+// A second file, the same size, swapped in once the answers are locked:
+image: { src: '/img/map-blank.jpg', reveal: '/img/map-labelled.jpg', width: 1920, height: 960 },
+
+// Or boxes blanked out until then (one, or a list), in the same forms as a box answer:
+image: { src: '/img/engine.jpg', width: 1600, height: 1000, cover: [{ px: 300, py: 120, w: 400, h: 200 }] },
+```
+
+Either one makes the question hold its results back, the same way a video
+does: the clock runs on the stripped picture, the answers lock, every screen
+shows the full picture, and the host presses **Show results** (or **enter**)
+when they've said their piece. Reveal pictures are fetched by every phone in
+the lobby, like clips, so the swap is instant. Add `clock: 'host'` if you want
+to talk over the blank picture before the countdown starts.
 
 ### Video questions
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useRoom } from '../useRoom.js';
 import { usePreload } from '../usePreload.js';
 import { useFx } from '../useFx.js';
@@ -45,7 +45,8 @@ export default function Player() {
   const { status, state, send, now, lastError, clearError } = useRoom({ onOpen, onMessage });
   // Pull every clip in the quiz into memory from the lobby onwards, and tell
   // the host as each one lands (again on reconnect, since `send` is fresh).
-  const sources = usePreload(state?.quiz.videos, useCallback((src) => send({ type: 'player:loaded', src }), [send]));
+  const media = useMemo(() => [...(state?.quiz.videos ?? []), ...(state?.quiz.images ?? [])], [state?.quiz.videos, state?.quiz.images]);
+  const sources = usePreload(media, useCallback((src) => send({ type: 'player:loaded', src }), [send]));
   const loadedRef = useRef(sources);
   loadedRef.current = sources;
   useEffect(() => { if (status === 'open') for (const src of Object.keys(loadedRef.current)) send({ type: 'player:loaded', src }); }, [status, send]);
@@ -145,6 +146,7 @@ export default function Player() {
             <p className="muted">{REPLENISH_LABEL[state.quiz.replenish] || REPLENISH_LABEL.round}</p>
           </div>
           {state.quiz.speedBonus > 0 && <p className="muted">🏁 The first player to settle on the right answer gets +{state.quiz.speedBonus}. Moving again resets your time.</p>}
+          {state.quiz.rounds[0]?.practice && <p className="muted">🎓 Round 1 is a practice round: one of each kind of question. Scores go back to zero before the real thing starts.</p>}
           <div className="avatar-grid">
             {players.map((p) => <div key={p.id} className="lobby-player"><Avatar player={p} size="md" me={p.id === saved.playerId} /><span>{p.name}</span></div>)}
           </div>
@@ -165,14 +167,14 @@ export default function Player() {
               {room.phase === 'intro' && (
                 <div className="banner">{q.type === 'video' ? '🎬 Watch. The clock starts when the host pauses the clip.' : '👀 Get ready. The host will start the clock.'}</div>
               )}
-              {room.phase === 'locked' && <div className="banner">🔒 Answers locked. Let\'s see what happened…</div>}
+              {room.phase === 'locked' && <div className="banner">{q.type === 'video' ? '🔒 Answers locked. Let\'s see what happened…' : '🔒 Answers locked. Here\'s the full picture…'}</div>}
               <Board
                 question={q} players={players} meId={saved.playerId}
                 controlId={state.me?.possessing || saved.playerId}
                 reveal={reveal} hint={state.me?.hint}
                 interactive={room.phase === 'question' && !state.me?.possessed}
                 onMove={onMove} targeting={arming} onTarget={onTarget} fx={fx}
-                video={room.video} now={now} sources={sources}
+                video={room.video} now={now} sources={sources} unveiled={room.phase === 'locked' || room.phase === 'reveal'}
                 notice={state.me?.possessed && room.phase === 'question' ? { tone: 'bad', text: state.me.possessed.dropped ? '🕹️ Possessed and locked until the reveal' : '🕹️ Someone is moving you!' } : null}
               />
               {room.phase === 'question' && <div className="mobile-only"><PowerBar status={state.me?.powers} onUse={usePower} arming={arming} placed={me?.x !== null && me?.x !== undefined} /></div>}
@@ -189,6 +191,7 @@ export default function Player() {
                     {me?.result?.fastest && <div className="fastest">🏁 Fastest correct answer, +{state.quiz.speedBonus}</div>}
                     {me?.powers?.length > 0 && <div className="muted">Used: {me.powers.map((id) => POWERS.find((p) => p.id === id)?.name).join(' + ')}</div>}
                     {reveal?.note && <div className="note">{reveal.note}</div>}
+                    {q.practice && q.indexInRound + 1 === q.roundTotal && <div className="muted">🎓 That's the practice over. Scores reset to 0 for the real thing.</div>}
                   </div>
                 </div>
               )}

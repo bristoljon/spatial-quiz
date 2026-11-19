@@ -98,6 +98,7 @@ input.code-input { text-transform: uppercase; letter-spacing: 0.3em; font-weight
 .power-intro p { margin: 4px 0 0; }
 .round-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .pill { font-size: 0.75rem; font-weight: 700; background: rgba(90,209,255,0.15); color: var(--accent2); border: 1px solid rgba(90,209,255,0.4); border-radius: 999px; padding: 2px 10px; }
+.pill.practice { background: rgba(255,209,102,0.15); color: var(--warn); border-color: rgba(255,209,102,0.4); }
 .side .stat.small { font-size: 1rem; }
 .side .stat.small b { font-size: 1.4rem; }
 .board-col { min-width: 0; }
@@ -173,6 +174,7 @@ input.code-input { text-transform: uppercase; letter-spacing: 0.3em; font-weight
 /* wager */
 /* image: the picture sits in a fixed rectangle so positions mean the same everywhere */
 .image-layer img { position: absolute; display: block; object-fit: fill; pointer-events: none; user-select: none; -webkit-user-drag: none; }
+.image-layer .cover { position: absolute; display: flex; align-items: center; justify-content: center; background: var(--panel); border: 2px dashed var(--line); color: var(--muted); font-weight: 800; font-size: clamp(1rem, 4vw, 3rem); pointer-events: none; }
 .board.image { background: #0b0c16; }
 .board.image .target span { text-shadow: 0 1px 6px rgba(0,0,0,0.9); }
 .board.image .readout, .board.image .hover-readout { background: rgba(15,16,32,0.92); }

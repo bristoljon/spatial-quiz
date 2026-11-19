@@ -125,6 +125,18 @@ export function imagePosition(q, a) {
   return { x: r.x + f.x * r.w, y: r.y + f.y * r.h };
 }
 
+// Board rectangles of a picture's `cover` boxes (one box or a list), hidden
+// until the answers are locked. Boxes take the same forms as box answers.
+export function coverRects(q) {
+  const c = q.image?.cover;
+  if (!c) return [];
+  const r = imageRect(q);
+  return [].concat(c).map((box) => {
+    const b = boxFraction(q, box);
+    return { x: r.x + b.x * r.w, y: r.y + b.y * r.h, w: b.w * r.w, h: b.h * r.h };
+  });
+}
+
 // Board rectangle of a box answer, or null for a point.
 export function imageBox(q, a) {
   if (!a || !a.box) return null;

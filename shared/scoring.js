@@ -13,9 +13,14 @@ export function falloff(err, exact, zeroAt, points) {
 // the clip, pauses it, then starts the countdown.
 export const hostClock = (q) => q.type === 'video' || q.clock === 'host';
 
+// Does the picture change once the answers are in? A second picture
+// (`image.reveal`, e.g. the labelled version) or `image.cover` boxes that
+// are lifted.
+export const unveils = (q) => q.type === 'image' && !!(q.image?.reveal || q.image?.cover);
+
 // Does the question hold the results back after the clock, so the host can
-// resume the video before the reveal?
-export const holdsReveal = (q) => q.type === 'video';
+// resume the video, or talk over the unveiled picture, before the reveal?
+export const holdsReveal = (q) => q.type === 'video' || unveils(q);
 
 // Image questions: radii as fractions of the board width.
 export const IMAGE_EXACT = 0.02;

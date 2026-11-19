@@ -11,6 +11,8 @@ import { describeAnswer } from '../format.js';
 import RoundHead from '../components/RoundHead.jsx';
 
 const KEY = 'sq:host';
+// The last question of a practice round: moving on wipes the scores.
+const lastOfPractice = (q) => !!q.practice && q.indexInRound + 1 === q.roundTotal;
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; } };
 
 export default function Host() {
@@ -37,7 +39,8 @@ export default function Host() {
   const { status, state, send, now, lastError, clearError } = useRoom({ onOpen, onMessage });
   const phase = state?.room.phase;
   const q = state?.question;
-  const sources = usePreload(state?.quiz.videos);
+  const media = useMemo(() => [...(state?.quiz.videos ?? []), ...(state?.quiz.images ?? [])], [state?.quiz.videos, state?.quiz.images]);
+  const sources = usePreload(media);
 
   // Video questions: this screen's <video> is the one everyone follows.
   const videoRef = useRef(null);
@@ -163,7 +166,7 @@ export default function Host() {
             {room.phase === 'question' && <Timer endsAt={room.endsAt} timeLimit={q.timeLimit} now={now} big />}
           </div>
           <div className="stage-body">
-            <Board question={q} players={players} reveal={reveal} fx={fx} size="lg" video={room.video} videoRef={hasVideo ? videoRef : null} now={now} sources={sources} />
+            <Board question={q} players={players} reveal={reveal} fx={fx} size="lg" video={room.video} videoRef={hasVideo ? videoRef : null} now={now} sources={sources} unveiled={room.phase === 'locked' || room.phase === 'reveal'} />
             <aside className="side">
               {room.phase === 'intro' && (
                 <>
@@ -185,6 +188,7 @@ export default function Host() {
               {room.phase === 'locked' && (
                 <>
                   <div className="stat">🔒 Answers locked</div>
+                  {!hasVideo && <div className="muted">The full picture is on every screen. Show the results when you're ready.</div>}
                   {hasVideo && <VideoControls videoRef={videoRef} playing={!!room.video?.playing} onToggle={toggle} onSeek={seek} resume />}
                   <button className="primary" onClick={() => send({ type: 'host:reveal' })}>Show results <kbd>⏎</kbd></button>
                   <Leaderboard players={players} limit={12} />
@@ -199,8 +203,9 @@ export default function Host() {
                   </div>
                   <Leaderboard players={players} limit={12} showDelta />
                   <button className="primary" onClick={() => send({ type: 'host:next' })}>
-                    {q.index + 1 >= q.total ? 'Final scores' : 'Next question'} <kbd>⏎</kbd>
+                    {q.index + 1 >= q.total ? 'Final scores' : lastOfPractice(q) ? `Reset scores · start ${quiz.rounds[q.round + 1]?.title ?? 'the quiz'}` : 'Next question'} <kbd>⏎</kbd>
                   </button>
+                  {lastOfPractice(q) && <p className="muted">End of the practice round: everyone goes back to 0.</p>}
                 </>
               )}
             </aside>

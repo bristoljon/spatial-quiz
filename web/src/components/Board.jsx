@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import Avatar from './Avatar.jsx';
 import { describe, describePoint, fmt } from '../format.js';
-import { zonesFor, rangeX, rangeValue, xyPosition, imageRect, imagePosition, imageBox, media, RANGE_PAD, XY_PAD, WAGER_FULL_AT, BOARD_ASPECT } from '../../../shared/spatial.js';
+import { zonesFor, rangeX, rangeValue, xyPosition, imageRect, imagePosition, imageBox, coverRects, media, RANGE_PAD, XY_PAD, WAGER_FULL_AT, BOARD_ASPECT } from '../../../shared/spatial.js';
 
 const SEND_EVERY_MS = 70;
 const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth labelling
@@ -16,8 +16,9 @@ const LABELLED = new Set(['range', 'xy']); // types with a numeric value worth l
 // fx: transient effects to draw, e.g. [{ key, type: 'bump', x, y }].
 // video: the room's video state to follow; videoRef: given by the host, whose
 // element is the one everyone else follows. now: server-clock function.
-// sources: preloaded clips as { src: objectUrl } (see usePreload).
-export default function Board({ question: q, players, meId, controlId = meId, reveal, hint = null, interactive = false, onMove, targeting = false, onTarget, fx = [], size = 'md', notice = null, video = null, videoRef = null, now = Date.now, sources = {} }) {
+// sources: preloaded clips and pictures as { src: objectUrl } (see usePreload).
+// unveiled: answers are in, so an image's reveal picture is shown and its covers lifted.
+export default function Board({ question: q, players, meId, controlId = meId, reveal, hint = null, interactive = false, onMove, targeting = false, onTarget, fx = [], size = 'md', notice = null, video = null, videoRef = null, now = Date.now, sources = {}, unveiled = false }) {
   const ref = useRef(null);
   const [drag, setDrag] = useState(null);   // optimistic own position while the pointer is down
   const [hover, setHover] = useState(null); // desktop: value under the cursor before clicking
@@ -143,7 +144,7 @@ export default function Board({ question: q, players, meId, controlId = meId, re
       {q.type === 'range' && <RangeLayer q={q} reveal={reveal} hint={hint} mine={interactive && !reveal ? myPos : null} hover={hover} />}
       {q.type === 'xy' && <XyLayer q={q} reveal={reveal} hint={hint} />}
       {q.type === 'wager' && <WagerLayer q={q} reveal={reveal} hint={hint} />}
-      {q.type === 'image' && <ImageLayer q={q} reveal={reveal} hint={hint} />}
+      {q.type === 'image' && <ImageLayer q={q} reveal={reveal} hint={hint} unveiled={unveiled} sources={sources} />}
       {q.type === 'video' && <VideoLayer key={q.id} q={q} reveal={reveal} hint={hint} video={video} videoRef={videoRef} now={now} sources={sources} />}
 
       <div className="fx">
@@ -294,12 +295,16 @@ function Ring({ cx, cy, r, cls }) {
 }
 
 // The picture, letterboxed to the same rectangle on every device, with the
-// answer (and its scoring rings) drawn over it at the reveal.
-function ImageLayer({ q, reveal, hint }) {
+// answer (and its scoring rings) drawn over it at the reveal. Once the
+// answers are in (`unveiled`) the reveal picture takes its place and any
+// cover boxes are lifted.
+function ImageLayer({ q, reveal, hint, unveiled, sources }) {
   const r = imageRect(q);
+  const src = unveiled && q.image.reveal ? sources[q.image.reveal] ?? q.image.reveal : q.image.src;
   return (
     <div className="layer image-layer">
-      <img src={q.image.src} alt="" draggable={false} onLoad={(ev) => checkSize(q, ev.currentTarget.naturalWidth, ev.currentTarget.naturalHeight)} style={rectStyle(r)} />
+      <img src={src} alt="" draggable={false} onLoad={(ev) => checkSize(q, ev.currentTarget.naturalWidth, ev.currentTarget.naturalHeight)} style={rectStyle(r)} />
+      {!unveiled && coverRects(q).map((c, i) => <div key={i} className="cover" style={rectStyle(c)}><span>?</span></div>)}
       <PictureOverlay q={q} reveal={reveal} hint={hint} />
     </div>
   );
